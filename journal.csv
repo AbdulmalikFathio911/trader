@@ -1,1 +1,2 @@
 id,time,symbol,side,type,entry,stop,target,lots,risk,reward_risk,scenario_estimate,verdict,result,pnl
+1,2026-11-12 22:07,EURUSD,sell,Sell Limit,1.10825,1.11095,1.10474,,,1.30,50,NO_TRADE,,
