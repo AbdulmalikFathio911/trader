@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build ui/index.html: one self-contained page.
 
-Inputs: ui/index.src.html, ui/vendor/decimal.js, ui/vendor/fonts/, ui/calc.js, ui/app.js and the
+Inputs: ui/index.src.html, ui/vendor/decimal.js, ui/vendor/fonts/, ui/icons/icon-transparent.svg,
+ui/calc.js, ui/app.js and the
 repository's skill files (SKILL_FILES below). The skill files are embedded verbatim, so
 the page's image analysis reads the same rules and method as the /trade skill.
 
@@ -78,10 +79,17 @@ def fonts_css():
     return "\n".join(rules)
 
 
+def mark_svg():
+    """The brand mark in the top bar: the app icon's key, inlined so the page stays one file."""
+    svg = (HERE / "icons" / "icon-transparent.svg").read_text(encoding="utf-8").strip()
+    return svg.replace("<svg ", '<svg class="mark" aria-hidden="true" ', 1)
+
+
 def build():
     """Return the text of the built page."""
     page = (HERE / "index.src.html").read_text(encoding="utf-8")
-    parts = [("/*__FONTS_CSS__*/", fonts_css()), ("/*__SKILLS_JSON__*/", skills_json())]
+    parts = [("/*__FONTS_CSS__*/", fonts_css()), ("/*__SKILLS_JSON__*/", skills_json()),
+             ("<!--__MARK_SVG__-->", mark_svg())]
     for marker, name in SCRIPTS:
         source = (HERE / name).read_text(encoding="utf-8")
         if "</script" in source.lower():

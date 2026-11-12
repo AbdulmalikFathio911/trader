@@ -83,6 +83,11 @@ It never places an order, never asks for a password and loads nothing from the n
 - **Same arithmetic.** `ui/calc.js` is a port of `calc.py`. `tests/test_ui.py` compares
   the two field by field (it needs `node` and is skipped without it) and fails when
   `ui/index.html` is stale.
+- **Installed app.** `ui/manifest.json`, `ui/sw.js` and `ui/icons/` let the page be added to
+  a phone's home screen when the `ui/` folder is served on its own over a secure address.
+  The worker saves only the page's own files. Inside the Claude viewer this is skipped,
+  and outside it the image analysis is unavailable: only the manual numbers and the
+  journal work there.
 - **After changing a skill file, `calc.py` or anything in `ui/`:** run
   `python3 ui/build.py`, run the tests, then republish the page. The published page
   keeps the old skill files until it is republished.

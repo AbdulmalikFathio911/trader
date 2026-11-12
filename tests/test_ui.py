@@ -59,6 +59,31 @@ class TestBuiltPage(unittest.TestCase):
             self.assertFalse(needle in code, f"app.js contains {needle}")
 
 
+class TestInstalledApp(unittest.TestCase):
+    """The files that let the page be installed as an app when it is served on its own."""
+
+    def test_manifest_icons_exist(self):
+        manifest = json.loads((UI / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["display"], "standalone")
+        self.assertTrue(manifest["icons"])
+        for icon in manifest["icons"]:
+            self.assertTrue((UI / icon["src"]).is_file(), icon["src"])
+
+    def test_page_links_the_manifest_and_icons(self):
+        page = (UI / "index.html").read_text(encoding="utf-8")
+        for name in ("manifest.json", "icons/icon-192.png", "icons/apple-touch-icon-180.png"):
+            self.assertIn(f'href="{name}"', page)
+            self.assertTrue((UI / name).is_file(), name)
+
+    def test_offline_worker_saves_only_files_that_exist(self):
+        worker = (UI / "sw.js").read_text(encoding="utf-8")
+        files = re.search(r"const FILES = \[(.*?)\];", worker, re.S).group(1)
+        for name in re.findall(r"'([^']+)'", files):
+            if name != "./":
+                self.assertTrue((UI / name).is_file(), name)
+        self.assertNotIn("http", worker.replace("https:", ""))
+
+
 @unittest.skipUnless(shutil.which("node"), "node is not installed: calc.js parity not checked")
 class TestCalcParity(unittest.TestCase):
     """ui/calc.js must give the same numbers as calc.py."""

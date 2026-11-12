@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0c1c22">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="مكتب الصفقات">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png">
 <title>مكتب الصفقات</title>
 <style>
 /*__FONTS_CSS__*/
@@ -56,9 +63,7 @@ button { cursor: pointer; }
 .app { height: 100%; max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; }
 .bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px 8px; }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.mark { width: 30px; height: 30px; flex: none; border-radius: 8px; background: var(--gold); position: relative; transform: rotate(-6deg); box-shadow: 0 3px 0 var(--gold-deep); }
-.mark::before { content: ""; position: absolute; inset: 7px 6px; border-top: 3px solid var(--gold-ink); border-bottom: 3px solid var(--gold-ink); }
-.mark::after { content: ""; position: absolute; left: 6px; right: 6px; top: 13.5px; border-top: 3px dotted var(--gold-ink); }
+.mark { width: 36px; height: 36px; flex: none; transform: rotate(-6deg); filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.45)); }
 h1 { font-family: var(--font-display); font-weight: 800; font-size: clamp(1.05rem, 4.4vw, 1.35rem); margin: 0; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pill { flex: none; display: flex; align-items: baseline; gap: 5px; padding: 6px 11px; border-radius: 999px; border: 1px solid var(--hair); background: var(--desk-2); min-height: 40px; font-size: 0.72rem; color: var(--dim); white-space: nowrap; }
 .pill b { font-family: var(--font-mono); font-weight: 600; color: var(--chalk); font-size: 0.84rem; }
@@ -242,7 +247,7 @@ textarea { width: 100%; min-height: 96px; padding: 10px 12px; border-radius: 12p
 <body>
 <div class="app">
   <header class="bar">
-    <div class="brand"><span class="mark" aria-hidden="true"></span><h1>مكتب الصفقات</h1></div>
+    <div class="brand"><!--__MARK_SVG__--><h1>مكتب الصفقات</h1></div>
     <button type="button" class="pill" id="acct-pill" aria-label="بيانات الحساب"><span class="wide">الرصيد <b dir="ltr" id="pill-balance"></b></span> الهامش الحر <b dir="ltr" id="pill-free"></b></button>
   </header>
 
@@ -425,5 +430,16 @@ textarea { width: 100%; min-height: 96px; padding: 10px 12px; border-radius: 12p
 <script>/*__DECIMAL_JS__*/</script>
 <script>/*__CALC_JS__*/</script>
 <script>/*__APP_JS__*/</script>
+<script>
+// Installed-app support. It only runs when the page is served on its own over a secure
+// address: inside the Claude viewer the page is framed and this is skipped.
+(function () {
+  try {
+    if ('serviceWorker' in navigator && location.protocol === 'https:' && window.top === window) {
+      navigator.serviceWorker.register('sw.js').catch(function () { /* the page works without it */ });
+    }
+  } catch (e) { /* framed by another origin: nothing to do */ }
+})();
+</script>
 </body>
 </html>
