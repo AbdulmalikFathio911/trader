@@ -6,6 +6,8 @@
   "risk_pct": 1,
   "max_open_risk_pct": 6,
   "max_position_pct": 25,
+  "max_daily_losses": 2,
+  "news_lock_until": null,
   "account_type": "demo",
   "open_positions": null,
   "source": "starting values, not read from a screenshot",

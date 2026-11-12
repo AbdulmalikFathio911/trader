@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Full-bleed app icon: the whole square is the key. The phone rounds the corners. -->
+  <defs>
+    <linearGradient id="face" x1="0" y1="0" x2="0.25" y2="1">
+      <stop offset="0" stop-color="#ffdc73"/>
+      <stop offset="0.5" stop-color="#f2b632"/>
+      <stop offset="1" stop-color="#e09c18"/>
+    </linearGradient>
+    <linearGradient id="side" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b47e0e"/>
+      <stop offset="1" stop-color="#7d5506"/>
+    </linearGradient>
+    <linearGradient id="lip" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8a5f08" stop-opacity="0"/>
+      <stop offset="1" stop-color="#8a5f08" stop-opacity="0.38"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff7d6" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#fff7d6" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="26%" cy="10%" r="70%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="faceClip"><rect x="-40" y="-260" width="1104" height="1128" rx="210"/></clipPath>
+  </defs>
+
+  <!-- the body of the key shows as a darker band along the bottom -->
+  <rect width="1024" height="1024" fill="url(#side)"/>
+  <rect x="0" y="930" width="1024" height="94" fill="#5f4003" opacity="0.35"/>
+  <!-- the top face, rounded where it meets the body -->
+  <rect x="-40" y="-260" width="1104" height="1128" rx="210" fill="url(#face)"/>
+  <g clip-path="url(#faceClip)">
+    <rect width="1024" height="1024" fill="url(#sheen)"/>
+    <rect x="0" y="700" width="1024" height="168" fill="url(#lip)"/>
+    <rect x="0" y="0" width="1024" height="150" fill="url(#rim)" opacity="0.55"/>
+  </g>
+  <path d="M-40 868 H1064" stroke="#fff3c4" stroke-opacity="0" />
+
+  <!-- the ticket: two rules and a perforation, pressed into the key -->
+  <g fill="#fff1bd" opacity="0.8" transform="translate(0 9)">
+    <rect x="252" y="236" width="520" height="84" rx="42"/>
+    <rect x="252" y="586" width="520" height="84" rx="42"/>
+    <rect x="252" y="411" width="84" height="84" rx="42"/><rect x="397" y="411" width="84" height="84" rx="42"/>
+    <rect x="543" y="411" width="84" height="84" rx="42"/><rect x="688" y="411" width="84" height="84" rx="42"/>
+  </g>
+  <g fill="#231a02">
+    <rect x="252" y="236" width="520" height="84" rx="42"/>
+    <rect x="252" y="586" width="520" height="84" rx="42"/>
+    <rect x="252" y="411" width="84" height="84" rx="42"/><rect x="397" y="411" width="84" height="84" rx="42"/>
+    <rect x="543" y="411" width="84" height="84" rx="42"/><rect x="688" y="411" width="84" height="84" rx="42"/>
+  </g>
+</svg>

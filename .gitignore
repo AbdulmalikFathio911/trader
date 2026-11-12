@@ -4,3 +4,6 @@ __pycache__/
 # Screenshots can show account details: keep them out of git.
 inbox/*
 !inbox/.gitkeep
+
+# Optional packages for ui/tests/smoke.js
+node_modules/

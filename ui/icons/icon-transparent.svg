@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- The same key with its own rounded shape on a transparent background. -->
+  <defs>
+    <linearGradient id="face" x1="0" y1="0" x2="0.25" y2="1">
+      <stop offset="0" stop-color="#ffdc73"/>
+      <stop offset="0.5" stop-color="#f2b632"/>
+      <stop offset="1" stop-color="#e09c18"/>
+    </linearGradient>
+    <linearGradient id="side" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b47e0e"/>
+      <stop offset="1" stop-color="#7d5506"/>
+    </linearGradient>
+    <linearGradient id="lip" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8a5f08" stop-opacity="0"/>
+      <stop offset="1" stop-color="#8a5f08" stop-opacity="0.38"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff7d6" stop-opacity="0.95"/>
+      <stop offset="0.3" stop-color="#fff7d6" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="26%" cy="10%" r="70%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="faceClip"><rect x="32" y="24" width="960" height="860" rx="216"/></clipPath>
+  </defs>
+  <rect x="32" y="140" width="960" height="860" rx="216" fill="url(#side)"/>
+  <rect x="32" y="24" width="960" height="860" rx="216" fill="url(#face)"/>
+  <g clip-path="url(#faceClip)">
+    <rect width="1024" height="1024" fill="url(#sheen)"/>
+    <rect x="0" y="716" width="1024" height="168" fill="url(#lip)"/>
+  </g>
+  <rect x="38" y="30" width="948" height="848" rx="210" fill="none" stroke="url(#rim)" stroke-width="12"/>
+  <g fill="#fff1bd" opacity="0.8" transform="translate(0 9)">
+    <rect x="252" y="246" width="520" height="84" rx="42"/>
+    <rect x="252" y="596" width="520" height="84" rx="42"/>
+    <rect x="252" y="421" width="84" height="84" rx="42"/><rect x="397" y="421" width="84" height="84" rx="42"/>
+    <rect x="543" y="421" width="84" height="84" rx="42"/><rect x="688" y="421" width="84" height="84" rx="42"/>
+  </g>
+  <g fill="#231a02">
+    <rect x="252" y="246" width="520" height="84" rx="42"/>
+    <rect x="252" y="596" width="520" height="84" rx="42"/>
+    <rect x="252" y="421" width="84" height="84" rx="42"/><rect x="397" y="421" width="84" height="84" rx="42"/>
+    <rect x="543" y="421" width="84" height="84" rx="42"/><rect x="688" y="421" width="84" height="84" rx="42"/>
+  </g>
+</svg>
