@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build ui/index.html: one self-contained page.
 
-Inputs: ui/index.src.html, ui/vendor/decimal.js, ui/calc.js, ui/app.js and the
+Inputs: ui/index.src.html, ui/vendor/decimal.js, ui/vendor/fonts/, ui/calc.js, ui/app.js and the
 repository's skill files (SKILL_FILES below). The skill files are embedded verbatim, so
 the page's image analysis reads the same rules and method as the /trade skill.
 
@@ -12,6 +12,7 @@ Run from the repository root:
     python3 ui/build.py
 Standard library only. The page loads nothing from the network.
 """
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -37,6 +38,14 @@ SCRIPTS = [
     ("/*__CALC_JS__*/", "calc.js"),
     ("/*__APP_JS__*/", "app.js"),
 ]
+# Fonts are inlined as data URIs so the page loads nothing from the network.
+FONTS = [   # (family, weight, file in ui/vendor/fonts)
+    ("Alexandria", "100 900", "alexandria-arabic-wght-normal.woff2"),
+    ("Plex Arabic", "400", "ibm-plex-sans-arabic-arabic-400-normal.woff2"),
+    ("Plex Arabic", "600", "ibm-plex-sans-arabic-arabic-600-normal.woff2"),
+    ("Plex Mono", "400", "ibm-plex-mono-latin-400-normal.woff2"),
+    ("Plex Mono", "600", "ibm-plex-mono-latin-600-normal.woff2"),
+]
 MAX_SKILL_BYTES = 200 * 1024   # the page may send at most 256 KiB of text to the model
 
 
@@ -58,10 +67,21 @@ def skills_json():
     return json.dumps(data, ensure_ascii=False).replace("<", "\\u003c")
 
 
+def fonts_css():
+    rules = []
+    for family, weight, name in FONTS:
+        data = base64.b64encode((HERE / "vendor" / "fonts" / name).read_bytes()).decode("ascii")
+        rules.append(
+            f'@font-face {{ font-family: "{family}"; font-style: normal; font-weight: {weight}; '
+            f'font-display: swap; src: url(data:font/woff2;base64,{data}) format("woff2"); }}'
+        )
+    return "\n".join(rules)
+
+
 def build():
     """Return the text of the built page."""
     page = (HERE / "index.src.html").read_text(encoding="utf-8")
-    parts = [("/*__SKILLS_JSON__*/", skills_json())]
+    parts = [("/*__FONTS_CSS__*/", fonts_css()), ("/*__SKILLS_JSON__*/", skills_json())]
     for marker, name in SCRIPTS:
         source = (HERE / name).read_text(encoding="utf-8")
         if "</script" in source.lower():

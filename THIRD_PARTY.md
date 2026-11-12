@@ -1,7 +1,7 @@
 # Third-party material
 
 Two skills in this repository are copied from an open-source project, and the page in
-`ui/` carries one arithmetic library. Everything else was written for this repository.
+`ui/` carries one arithmetic library and three typefaces. Everything else was written for this repository.
 
 ## decimal.js
 
@@ -10,6 +10,19 @@ Two skills in this repository are copied from an open-source project, and the pa
 - Path in this repository: `ui/vendor/decimal.js`, unchanged
 - Why: `ui/calc.js` needs exact decimal arithmetic to match `calc.py`. The file is inlined
   into `ui/index.html` by `ui/build.py`, so the page loads nothing from the network.
+
+## Fonts
+
+Three typefaces are inlined into `ui/index.html` by `ui/build.py`, so the page loads no
+font from the network. All are under the SIL Open Font License 1.1; the license texts are
+next to the files in `ui/vendor/fonts/`. The files come unchanged from the Fontsource npm
+packages, version 5.3.0.
+
+| Typeface | npm package | Files in `ui/vendor/fonts/` |
+|----------|-------------|-----------------------------|
+| Alexandria | `@fontsource-variable/alexandria` | `alexandria-arabic-wght-normal.woff2` |
+| IBM Plex Sans Arabic | `@fontsource/ibm-plex-sans-arabic` | `ibm-plex-sans-arabic-arabic-400-normal.woff2`, `ibm-plex-sans-arabic-arabic-600-normal.woff2` |
+| IBM Plex Mono | `@fontsource/ibm-plex-mono` | `ibm-plex-mono-latin-400-normal.woff2`, `ibm-plex-mono-latin-600-normal.woff2` |
 
 ## claude-trading-skills
 

@@ -58,8 +58,9 @@
     T: spec('stocks', '1', 2, '1', '1')
   };
   var state = { account: clone(DEFAULT_ACCOUNT), symbols: clone(DEFAULT_SYMBOLS), journal: [],
-                files: [], tab: 'manual', busy: false, abort: null, touched: false,
-                symbol: 'EURUSD', storeNote: '' };
+                files: [], tab: 'ai', tabChosen: false, view: 'desk', side: 'sell', busy: false, abort: null,
+                touched: false, symbol: 'EURUSD', storeNote: '', manualUsed: false,
+                lastSource: 'manual', lastData: null, lastNotes: null };
   var caps = { sample: null, sampleKnown: false, db: null, dbKnown: false, images: null };
 
   // ------------------------------------------------------------ persistence
@@ -339,7 +340,15 @@
   }
 
   // -------------------------------------------------------------- rendering
+  var STAMP = { OK: 'تذكرة جاهزة', NO_TRADE: 'لا صفقة', INVALID: 'أرقام ناقصة' };
+  var STUB = [['Risk', 'المخاطرة'], ['Reward:Risk', 'العائد إلى المخاطرة'],
+              ['Margin', 'الهامش المطلوب'], ['Free margin after', 'الهامش الحر بعدها']];
+
   function chip(label, kind) { return el('span', { class: 'chip ' + kind, text: label }); }
+  function fold(title, kids, open) {
+    return el('details', open ? { open: '' } : {}, [el('summary', { text: title })].concat(kids));
+  }
+
   function renderStatus() {
     var box = $('status');
     clear(box);
@@ -351,7 +360,10 @@
     $('store-note').textContent = state.storeNote;
     $('store-note').hidden = !state.storeNote;
     $('btn-run').disabled = state.busy || !caps.sample || !state.files.length || !SKILLS.files.length;
+    $('btn-run').hidden = state.busy;
+    $('working').hidden = !state.busy;
     $('ai-unavailable').hidden = !caps.sampleKnown || !!caps.sample;
+    if (caps.sampleKnown && !caps.sample && state.tab === 'ai' && !state.tabChosen) setTab('manual');
   }
 
   var ACCOUNT_FIELDS = [['acc-balance', 'balance'], ['acc-free', 'free_margin'], ['acc-leverage', 'leverage'],
@@ -362,13 +374,15 @@
 
   function renderAccount() {
     ACCOUNT_FIELDS.forEach(function (f) { if (document.activeElement !== $(f[0])) $(f[0]).value = str(state.account[f[1]]); });
+    $('pill-balance').textContent = str(state.account.balance) || '?';
+    $('pill-free').textContent = str(state.account.free_margin) || '?';
     var box = $('positions');
     clear(box);
     var p = state.account.open_positions;
     if (p === null || p === undefined) {
-      box.appendChild(el('p', { class: 'hint warn-text', text: 'الصفقات المفتوحة غير معروفة. لن تخرج تذكرة حتى تُعرف: أضف صورة تبويب التداول مع صور الشارت، أو أكد أنه لا توجد صفقات.' }));
+      box.appendChild(el('p', { class: 'note warn', text: 'غير معروفة. لن تخرج تذكرة حتى تُعرف: أضف صورة تبويب التداول مع صور الشارت، أو أكد أنه لا توجد صفقات.' }));
     } else if (!p.length) {
-      box.appendChild(el('p', { class: 'hint', text: 'لا توجد صفقات مفتوحة.' }));
+      box.appendChild(el('p', { class: 'note', text: 'لا توجد صفقات مفتوحة.' }));
     } else {
       box.appendChild(block(p.map(function (x) {
         return [x.symbol + ' ' + x.side + ' ' + x.volume, '@ ' + x.open_price + '  SL ' + (str(x.stop_loss) || 'none')];
@@ -377,12 +391,19 @@
   }
 
   function renderSymbol() {
-    var select = $('sym-select');
-    clear(select);
-    Object.keys(state.symbols).sort().forEach(function (name) {
-      select.appendChild(el('option', { value: name, text: name }));
+    var names = Object.keys(state.symbols).sort(function (x, y) {   // currencies and metals first, then stocks
+      var sx = state.symbols[x].calc_mode === 'stocks' ? 1 : 0, sy = state.symbols[y].calc_mode === 'stocks' ? 1 : 0;
+      return sx - sy || (x < y ? -1 : x > y ? 1 : 0);
     });
-    if (!state.symbols[state.symbol]) state.symbol = Object.keys(state.symbols)[0];
+    if (!state.symbols[state.symbol]) state.symbol = names[0];
+    var select = $('sym-select'), chips = $('sym-chips');
+    clear(select);
+    clear(chips);
+    names.forEach(function (name) {
+      select.appendChild(el('option', { value: name, text: name }));
+      chips.appendChild(el('button', { type: 'button', 'data-sym': name, 'aria-pressed': String(name === state.symbol), text: name,
+        onclick: function () { state.symbol = name; state.manualUsed = true; renderSymbol(); runManual(true); } }));
+    });
     select.value = state.symbol;
     var sp = state.symbols[state.symbol];
     $('sym-mode').value = sp.calc_mode;
@@ -398,80 +419,135 @@
       try { url = URL.createObjectURL(file); } catch (e) { /* no preview */ }
       box.appendChild(el('figure', { class: 'thumb' }, [
         url ? el('img', { src: url, alt: 'صورة ' + (index + 1) }) : null,
-        el('figcaption', {}, [
-          el('span', { text: 'صورة ' + (index + 1) }),
-          el('button', { type: 'button', class: 'link', text: 'حذف', onclick: function () { state.files.splice(index, 1); renderThumbs(); renderStatus(); } })
-        ])
+        el('button', { type: 'button', 'aria-label': 'حذف الصورة ' + (index + 1), text: '×',
+          onclick: function () { state.files.splice(index, 1); renderThumbs(); renderStatus(); } }),
+        el('figcaption', { text: 'صورة ' + (index + 1) })
       ]));
     });
+  }
+
+  function setView(view) {
+    state.view = view;
+    ['desk', 'journal', 'setup'].forEach(function (name) {
+      $('view-' + name).hidden = name !== view;
+      $('nav-' + name).setAttribute('aria-current', name === view ? 'page' : 'false');
+    });
+    $('main').scrollTop = 0;
+  }
+  function goSetupSymbol(name) {
+    setView('setup');
+    $('fold-symbols').open = true;
+    if (state.symbols[name]) { state.symbol = name; renderSymbol(); }
+    else if (name) { $('sym-new').value = name; }
+    try { $(state.symbols[name] ? 'sym-contract' : 'sym-new').focus(); } catch (e) { /* focus is a convenience */ }
+  }
+
+  // One-tap fixes for the reasons a person can settle on the spot.
+  function fixesFor(res) {
+    var t = res.trade || {}, buttons = [];
+    res.reasons.forEach(function (r) {
+      if (r.code === 'OPEN_RISK_UNKNOWN') {
+        buttons.push(el('button', { type: 'button', class: 'ghost', id: 'fix-nopos', text: 'ليس عندي صفقات مفتوحة',
+          onclick: function () { state.account.open_positions = []; saveSoon('account'); renderAccount(); rerun(true); } }));
+        buttons.push(el('button', { type: 'button', class: 'link', text: 'عندي صفقات: سأضيف صورة تبويب التداول',
+          onclick: function () { setTab('ai', true); } }));
+      }
+      if (r.code === 'NO_SPEC' || r.code === 'NO_RATE') {
+        buttons.push(el('button', { type: 'button', class: 'ghost', id: 'fix-spec', text: 'افتح مواصفات الرمز',
+          onclick: function () { goSetupSymbol(str(t.symbol)); } }));
+      }
+    });
+    return buttons.length ? el('div', { class: 'fixes' }, buttons) : null;
   }
 
   function renderResult(res, opts) {
     opts = opts || {};
     var box = $('result');
     clear(box);
-    var ok = res.verdict === 'OK';
-    var head = el('div', { class: 'verdict ' + (ok ? 'ok' : res.verdict === 'INVALID' ? 'bad' : 'warn') }, [
-      el('strong', { text: ok ? 'توجد صفقة مقترحة' : res.verdict === 'INVALID' ? 'أرقام غير صالحة' : 'لا صفقة' }),
-      el('span', { text: ok ? 'للحساب التجريبي. لم يُنفَّذ أي أمر.' : res.verdict === 'INVALID' ? 'صحح المدخلات ثم أعد الحساب.' : 'نتيجة صحيحة. لن تُرفع نسبة المخاطرة لإخراج تذكرة.' })
-    ]);
-    box.appendChild(head);
-    if (opts.example) box.appendChild(el('p', { class: 'hint', text: 'هذا مثال بأرقام البداية. غيّر الأرقام أو ارفع صورك.' }));
+    var ok = res.verdict === 'OK', t = res.trade || {}, out = res.calc || {};
+    box.className = 'ticket ' + (ok ? 'ok' : res.verdict === 'INVALID' ? 'bad' : 'no') + (opts.example ? ' example' : '');
+    if (!opts.quiet) { void box.offsetWidth; box.classList.add('fresh'); }
 
+    box.appendChild(el('div', { class: 'stamp', text: STAMP[res.verdict] || STAMP.NO_TRADE }));
+    if (opts.example) box.appendChild(el('span', { class: 'tag', text: 'مثال بأرقام البداية' }));
+    var typeText = str(out.order_type) || (t.side === 'buy' ? 'Buy' : t.side === 'sell' ? 'Sell' : '');
+    box.appendChild(el('header', { class: 'ticket-head' }, [el('div', {}, [
+      el('div', { class: 'sym', dir: 'ltr', text: str(t.symbol) || '?' }),
+      el('div', { class: 'type', dir: 'ltr', text: typeText })
+    ])]));
+
+    var textFold = null, pre = null;
     if (ok) {
-      var pre = el('pre', { class: 'code ticket', dir: 'ltr', id: 'ticket-text', text: res.ticketText });
-      var copy = el('button', { type: 'button', class: 'primary', text: 'انسخ التذكرة' });
-      copy.addEventListener('click', function () { copyText(res.ticketText, copy, pre); });
-      box.appendChild(el('h3', { text: 'التذكرة (تُنسخ يدوياً)' }));
-      box.appendChild(pre);
-      box.appendChild(el('div', { class: 'row' }, [copy]));
-    } else {
-      box.appendChild(el('h3', { text: 'السبب' }));
-      res.reasons.forEach(function (r) {
-        box.appendChild(el('p', { text: r.ar }));
-        if (r.note) box.appendChild(el('p', { class: 'hint', text: r.note }));
-        if (r.lines.length) box.appendChild(block(r.lines));
+      var dl = el('dl', { class: 'lines' });
+      [['Volume', out.lots], ['Price', out.entry], ['Stop Loss', out.stop_loss], ['Take Profit', out.take_profit]].forEach(function (l) {
+        dl.appendChild(el('dt', { text: l[0] }));
+        dl.appendChild(el('dd', { text: str(l[1]) || '-' }));
       });
+      box.appendChild(dl);
+      var copy = el('button', { type: 'button', class: 'cta', id: 'btn-copy', text: 'انسخ التذكرة' });
+      pre = el('pre', { class: 'code', dir: 'ltr', id: 'ticket-text', text: res.ticketText });
+      textFold = fold('نص التذكرة كما يُنسخ', [pre]);
+      copy.addEventListener('click', function () { copyText(res.ticketText, copy, pre, textFold); });
+      box.appendChild(copy);
+      box.appendChild(el('p', { class: 'sub', text: 'توجد صفقة مقترحة للحساب التجريبي. لم يُنفَّذ أي أمر: تُدخلها بيدك.' }));
+    } else {
+      res.reasons.forEach(function (r, i) {
+        box.appendChild(el('p', { class: i === 0 ? 'why' : '', text: r.ar }));
+        if (r.note) box.appendChild(el('p', { class: 'hint', text: r.note }));
+      });
+      var fixes = fixesFor(res);
+      if (fixes) box.appendChild(fixes);
       if (res.change.length) {
         box.appendChild(el('h3', { text: 'ما الذي يجب أن يتغيّر' }));
         box.appendChild(block(res.change));
       }
+      if (res.verdict !== 'INVALID') box.appendChild(el('p', { class: 'sub', text: 'نتيجة صحيحة. لن تُرفع نسبة المخاطرة لإخراج تذكرة.' }));
     }
-    if (res.numbers.length) {
-      box.appendChild(el('h3', { text: 'الأرقام (محسوبة بالحاسبة)' }));
-      box.appendChild(block(res.numbers));
-    }
+
+    box.appendChild(el('div', { class: 'perf', 'aria-hidden': 'true' }));
+    var byLabel = {};
+    res.numbers.forEach(function (n) { byLabel[n[0]] = n[1]; });
+    var stub = el('div', { class: 'stub' });
+    STUB.forEach(function (pair) {
+      if (byLabel[pair[0]]) stub.appendChild(el('div', {}, [el('span', { text: pair[1] }), el('b', { text: byLabel[pair[0]] })]));
+    });
+    if (stub.firstChild) box.appendChild(stub);
+
     if (res.warnings.length) {
-      box.appendChild(el('h3', { text: 'تحذيرات' }));
-      var list = el('ul', { class: 'warnings' });
+      var list = el('ul', {});
       res.warnings.forEach(function (w) {
         list.appendChild(el('li', {}, [w.ar, w.code ? el('pre', { class: 'code inline', dir: 'ltr', text: w.code }) : null]));
       });
-      box.appendChild(list);
+      box.appendChild(fold('تحذيرات (' + res.warnings.length + ')', [list], ok));
     }
-    if (res.evidence) box.appendChild(res.evidence);
-    if (res.opinion) box.appendChild(res.opinion);
+    var detail = [];
+    res.reasons.forEach(function (r) { if (r.lines.length) detail.push(block(r.lines)); });
+    if (res.numbers.length) detail.push(block(res.numbers));
+    if (opts.journalId) detail.push(block([['Ticket id', String(opts.journalId)]]));
+    if (detail.length) box.appendChild(fold('الأرقام كاملة (محسوبة بالحاسبة)', detail));
+    if (textFold) box.appendChild(textFold);
+    if (res.evidence) box.appendChild(fold('ما قُرئ من الصور', [res.evidence]));
+    if (res.opinion) box.appendChild(fold('رأي التحليل', [res.opinion]));
+
     if (!opts.example && !opts.journaled && res.verdict !== 'INVALID') {
-      var add = el('button', { type: 'button', text: 'أضف إلى السجل' });
+      var add = el('button', { type: 'button', class: 'ghost', id: 'btn-journal', text: 'أضف إلى السجل' });
       add.addEventListener('click', function () { addJournal(res); add.disabled = true; add.textContent = 'أُضيفت إلى السجل'; });
-      box.appendChild(el('div', { class: 'row' }, [add]));
+      box.appendChild(el('div', { class: 'row', style: 'margin-top:10px' }, [add]));
     }
-    if (opts.journalId) box.appendChild(block([['Ticket id', String(opts.journalId)]]));
-    var remind = el('ul', { class: 'reminders' }, [
+    box.appendChild(el('ul', { class: 'fine' }, [
       el('li', { text: 'أمر الوقف قد يُنفَّذ بسعر أسوأ من سعره.' }),
-      el('li', { text: 'الصفحة لا تضع أي أمر. أنت من يُدخل الأمر بيدك.' }),
-      el('li', { text: 'حساب تجريبي فقط، وهذه ليست نصيحة مالية.' })
-    ]);
-    box.appendChild(remind);
+      el('li', { text: 'الصفحة لا تضع أي أمر. حساب تجريبي فقط، وليست نصيحة مالية.' })
+    ]));
   }
 
-  function copyText(text, button, pre) {
+  function copyText(text, button, pre, holder) {
     function done(ok) {
       button.textContent = ok ? 'تم النسخ' : 'حدد النص وانسخه يدوياً';
       setTimeout(function () { button.textContent = 'انسخ التذكرة'; }, 2500);
     }
     function fallback() {
       try {
+        holder.open = true;
         var range = document.createRange();
         range.selectNodeContents(pre);
         var sel = window.getSelection();
@@ -485,70 +561,84 @@
     } catch (e) { fallback(); }
   }
 
+  function tile(label, value) { return el('div', { class: 'tile' }, [el('b', { text: value }), el('span', { text: label })]); }
+
   function renderJournal() {
     var rows = state.journal.slice().sort(function (a, b) { return Number(b.id) - Number(a.id); });
     var closed = rows.filter(function (r) { return r.verdict === 'OK' && (r.result === 'win' || r.result === 'loss'); });
     var wins = closed.filter(function (r) { return r.result === 'win'; }).length;
+    var waiting = rows.filter(function (r) { return r.verdict === 'OK' && !r.result; }).length;
+    $('nav-count').textContent = waiting ? String(waiting) : '';
+
     var stats = $('stats');
     clear(stats);
-    var lines = [['Closed trades', String(closed.length)]];
-    if (closed.length) {
-      var rr = closed.map(function (r) { return parseFloat(r.reward_risk); }).filter(function (v) { return isFinite(v) && v > 0; });
-      var avg = rr.length ? rr.reduce(function (s, v) { return s + v; }, 0) / rr.length : null;
-      var pnl = closed.reduce(function (s, r) { var v = parseFloat(r.pnl); return s + (isFinite(v) ? v : 0); }, 0);
-      lines.push(['Win rate', (wins / closed.length * 100).toFixed(1) + '%']);
-      if (avg) lines.push(['Average reward:risk', avg.toFixed(2)], ['Breakeven win rate', (100 / (1 + avg)).toFixed(1) + '%']);
-      lines.push(['Total profit or loss', pnl.toFixed(2) + ' ' + (str(state.account.currency) || 'USD')]);
-    }
-    stats.appendChild(block(lines));
-    if (closed.length < 30) stats.appendChild(el('p', { class: 'hint', text: 'أقل من ثلاثين صفقة مغلقة: العينة صغيرة ولا تدل على شيء بعد.' }));
+    var rr = closed.map(function (r) { return parseFloat(r.reward_risk); }).filter(function (v) { return isFinite(v) && v > 0; });
+    var avg = rr.length ? rr.reduce(function (s, v) { return s + v; }, 0) / rr.length : null;
+    var pnl = closed.reduce(function (s, r) { var v = parseFloat(r.pnl); return s + (isFinite(v) ? v : 0); }, 0);
+    stats.appendChild(tile('صفقات مغلقة', String(closed.length)));
+    stats.appendChild(tile('نسبة الربح', closed.length ? (wins / closed.length * 100).toFixed(1) + '%' : '-'));
+    stats.appendChild(tile('نسبة التعادل المطلوبة', avg ? (100 / (1 + avg)).toFixed(1) + '%' : '-'));
+    stats.appendChild(tile('الربح والخسارة', closed.length ? pnl.toFixed(2) + ' ' + (str(state.account.currency) || 'USD') : '-'));
+    $('stats-note').textContent = closed.length < 30 ? 'أقل من ثلاثين صفقة مغلقة: العينة صغيرة ولا تدل على شيء بعد.' : '';
 
-    var body = $('journal-body');
-    clear(body);
+    var list = $('journal-list');
+    clear(list);
     if (!rows.length) {
-      body.appendChild(el('tr', {}, [el('td', { colspan: '8', class: 'empty', text: 'السجل فارغ. كل نتيجة تحليل تُضاف هنا.' })]));
+      list.appendChild(el('p', { class: 'empty', text: 'السجل فارغ. كل نتيجة تحليل تُضاف هنا، وبعد إغلاق الصفقة تسجل نتيجتها.' }));
       return;
     }
     rows.forEach(function (r) {
-      var result = el('select', { 'aria-label': 'النتيجة', id: 'jr-result-' + r.id });
-      [['', 'لم تُغلق'], ['win', 'ربح'], ['loss', 'خسارة'], ['cancelled', 'ملغاة']].forEach(function (o) {
-        result.appendChild(el('option', { value: o[0], text: o[1] }));
-      });
-      result.value = r.result || '';
-      result.disabled = r.verdict !== 'OK';
-      result.addEventListener('change', function () { r.result = result.value; saveRow(r); renderJournal(); });
-      var pnl = el('input', { type: 'text', inputmode: 'decimal', dir: 'ltr', value: str(r.pnl), 'aria-label': 'الربح أو الخسارة', id: 'jr-pnl-' + r.id, class: 'small' });
-      pnl.disabled = r.verdict !== 'OK';
-      pnl.addEventListener('change', function () { r.pnl = price(pnl.value); saveRow(r); renderJournal(); });
-      var del = el('button', { type: 'button', class: 'link', text: 'حذف' });
-      del.addEventListener('click', function () {
-        state.journal = state.journal.filter(function (x) { return x !== r; });
-        deleteRow(r.id);
-        renderJournal();
-      });
-      body.appendChild(el('tr', {}, [
-        el('td', { dir: 'ltr', text: String(r.id) }),
-        el('td', { dir: 'ltr', text: str(r.time).slice(0, 16).replace('T', ' ') }),
-        el('td', { dir: 'ltr', text: [r.symbol, r.type || r.side].filter(Boolean).join(' ') }),
-        el('td', { dir: 'ltr', text: [r.entry, r.stop, r.target].map(function (v) { return str(v) || '-'; }).join(' / ') }),
-        el('td', { dir: 'ltr', text: [str(r.lots) || '-', str(r.risk) || '-', str(r.reward_risk) || '-'].join(' / ') }),
-        el('td', {}, [el('span', { class: 'chip ' + (r.verdict === 'OK' ? 'ok' : 'warn'), text: r.verdict === 'OK' ? 'تذكرة' : 'لا صفقة' })]),
-        el('td', {}, [result, pnl]),
-        el('td', {}, [del])
-      ]));
+      var isOk = r.verdict === 'OK';
+      var card = el('article', { class: 'jcard' + (isOk ? ' ok' : ''), 'data-id': String(r.id) }, [
+        el('header', {}, [
+          el('span', { class: 'jsym', text: '#' + r.id + '  ' + [r.symbol, r.type || r.side].filter(Boolean).join(' ') }),
+          el('span', { class: 'chip ' + (isOk ? 'ok' : 'warn'), text: isOk ? 'تذكرة' : 'لا صفقة' })
+        ]),
+        el('div', { class: 'jnum', text: [r.entry, r.stop, r.target].map(function (v) { return str(v) || '-'; }).join(' / ') +
+          (isOk ? '   vol ' + (str(r.lots) || '-') + '   risk ' + (str(r.risk) || '-') + '   RR ' + (str(r.reward_risk) || '-') : '') }),
+        el('div', { class: 'jnum', text: str(r.time).slice(0, 16).replace('T', ' ') })
+      ]);
+      if (isOk) {
+        var seg = el('div', { class: 'seg', role: 'group', 'aria-label': 'نتيجة الصفقة' });
+        [['win', 'ربح'], ['loss', 'خسارة'], ['cancelled', 'ملغاة']].forEach(function (o) {
+          seg.appendChild(el('button', { type: 'button', 'data-result': o[0], 'aria-pressed': String(r.result === o[0]), text: o[1],
+            onclick: function () { r.result = r.result === o[0] ? '' : o[0]; saveRow(r); renderJournal(); } }));
+        });
+        var pnlInput = el('input', { type: 'text', inputmode: 'decimal', dir: 'ltr', value: str(r.pnl), id: 'jr-pnl-' + r.id, autocomplete: 'off' });
+        pnlInput.addEventListener('change', function () { r.pnl = price(pnlInput.value); saveRow(r); renderJournal(); });
+        card.appendChild(seg);
+        card.appendChild(el('label', { class: 'field', for: 'jr-pnl-' + r.id }, ['مبلغ الربح أو الخسارة', pnlInput]));
+      }
+      card.appendChild(el('button', { type: 'button', class: 'link', style: 'align-self:flex-start', text: 'حذف من السجل',
+        onclick: function () {
+          state.journal = state.journal.filter(function (x) { return x !== r; });
+          deleteRow(r.id);
+          renderJournal();
+        } }));
+      list.appendChild(card);
     });
   }
 
-  function renderAll() { renderStatus(); renderAccount(); renderSymbol(); renderJournal(); renderSkills(); runManual(true); }
+  function renderAll() { renderStatus(); renderAccount(); renderSymbol(); renderJournal(); renderSkills(); rerun(false); }
 
   // ----------------------------------------------------------- manual mode
   function manualTrade() {
-    return { symbol: state.symbol, side: $('man-side').value, entry: $('man-entry').value, stop: $('man-stop').value,
+    return { symbol: state.symbol, side: state.side, entry: $('man-entry').value, stop: $('man-stop').value,
              target: $('man-target').value, current: $('man-current').value };
   }
-  function runManual(example) {
-    if (state.tab !== 'manual' && example) return;
-    renderResult(sizeTrade(manualTrade()), { example: !!example && !state.manualUsed });
+  function runManual(quiet) {
+    state.lastSource = 'manual';
+    renderResult(sizeTrade(manualTrade()), { example: !state.manualUsed, quiet: !!quiet });
+  }
+  // Recompute what is on the ticket after an account, specification or one-tap fix.
+  function rerun(fromFix) {
+    if (state.lastSource === 'ai' && state.lastData) {
+      var res = buildResult(state.lastData);
+      var id = fromFix ? addJournal(res) : null;
+      renderResult(res, { journaled: true, journalId: id, quiet: !fromFix });
+    } else {
+      runManual(!fromFix);
+    }
   }
 
   // ----------------------------------------------------------- image mode
@@ -601,7 +691,7 @@
     var box = $('skills');
     clear(box);
     if (!SKILLS.files.length) {
-      box.appendChild(el('p', { class: 'warn-text', text: 'ملفات المهارات غير محملة في هذه النسخة، فالتحليل بالصور متوقف.' }));
+      box.appendChild(el('p', { class: 'note warn', text: 'ملفات المهارات غير محملة في هذه النسخة، فالتحليل بالصور متوقف.' }));
       return;
     }
     box.appendChild(block([['Repository', str(SKILLS.repo)], ['Skills hash', str(SKILLS.skills_sha)],
@@ -639,7 +729,7 @@
     if (!sp || !str(sp.symbol)) return;
     var mode = MODE_OF[str(sp.calculation).toLowerCase()];
     if (!mode) {
-      evidence.appendChild(el('p', { class: 'hint warn-text', text: 'نوع الحساب في شاشة المواصفات خارج ما تغطيه الحاسبة، فلم تُحفظ المواصفات.' }));
+      evidence.appendChild(el('p', { class: 'hint', text: 'نوع الحساب في شاشة المواصفات خارج ما تغطيه الحاسبة، فلم تُحفظ المواصفات.' }));
       return;
     }
     var name = str(sp.symbol), cur = state.symbols[name] || spec(mode, '', '', '0.01', '0.01');
@@ -692,10 +782,16 @@
     return box;
   }
 
-  function resultFromAnalysis(data) {
+  function applyReads(data) {   // once per analysis: the Trade tab and Specification update the stored data
+    var notes = el('div', {});
+    applyAccountRead(data.account, notes);
+    applySpecRead(data.specification, notes);
+    return notes;
+  }
+
+  function buildResult(data) {
     var evidence = evidenceOf(data);
-    applyAccountRead(data.account, evidence);
-    applySpecRead(data.specification, evidence);
+    if (state.lastNotes) evidence.appendChild(state.lastNotes.cloneNode(true));
     var setup = data.setup || {};
     var res;
     var charts = (data.images || []).filter(function (im) { return im.kind === 'chart' && str(im.symbol) && str(im.timeframe); });
@@ -706,7 +802,7 @@
       if (!AR['GATE_' + str(setup.failed_gate)]) gate.ar = 'إحدى البوابات لم تنجح.';
       gate.note = str(setup.reason_ar);
       res = { verdict: 'NO_TRADE', reasons: [gate], change: [], warnings: [], numbers: [], calc: null,
-              trade: { symbol: str(setup.symbol), side: str(setup.side), entry: price(setup.entry), stop: price(setup.stop),
+              trade: { symbol: str(setup.symbol), side: str(setup.side).toLowerCase(), entry: price(setup.entry), stop: price(setup.stop),
                        target: price(setup.target), estimate: str(setup.base_estimate_pct) } };
     } else {
       var sym = str(setup.symbol), side = str(setup.side).toLowerCase();
@@ -728,34 +824,50 @@
     return res;
   }
 
-  function setBusy(on, note) {
+  var clockTimer = null;
+  function setBusy(on, text) {
     state.busy = on;
-    $('btn-stop').hidden = !on;
-    $('ai-progress').textContent = note || '';
+    $('ai-progress').textContent = text || '';
+    clearInterval(clockTimer);
+    if (on) {
+      var started = Date.now();
+      $('clock').textContent = '0s';
+      clockTimer = setInterval(function () { $('clock').textContent = Math.round((Date.now() - started) / 1000) + 's'; }, 1000);
+    }
     renderStatus();
+  }
+  function aiNote(text) {
+    $('ai-note').textContent = text || '';
+    $('ai-note').hidden = !text;
   }
   function runAnalysis() {
     if (!caps.sample || state.busy || !state.files.length || !SKILLS.files.length) return;
     state.abort = new AbortController();
-    setBusy(true, 'جاري قراءة الصور والتحليل. قد يأخذ دقيقة أو أكثر.');
+    aiNote('');
+    setBusy(true, 'أقرأ الصور وأحلل بملفات المهارات. قد يأخذ دقيقة أو أكثر.');
     caps.sample.json(buildPrompt(), { images: state.files.slice(), signal: state.abort.signal, cache: false,
-      onText: function () { $('ai-progress').textContent = 'وصل الرد، جاري تجهيز النتيجة.'; } })
+      onText: function () { $('ai-progress').textContent = 'وصل الرد. أحسب التذكرة.'; } })
       .then(function (data) {
         setBusy(false, '');
+        state.manualUsed = true;
         if (!data || typeof data !== 'object' || !Array.isArray(data.images)) {
-          renderResult({ verdict: 'NO_TRADE', reasons: [reason('BAD_REPLY')], change: [], warnings: [], numbers: [] }, { journaled: true });
+          aiNote(AR.BAD_REPLY);
           return;
         }
-        var res = resultFromAnalysis(data);
+        state.lastNotes = applyReads(data);
+        state.lastData = data;
+        state.lastSource = 'ai';
+        renderAccount();
+        renderSymbol();
+        var res = buildResult(data);
         var id = addJournal(res);
-        renderAccount(); renderSymbol();
         renderResult(res, { journaled: true, journalId: id });
-        $('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        try { $('result').scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* older views */ }
       }, function (e) {
         setBusy(false, '');
         var code = e && e.code;
-        if (code === 'cancelled') { $('ai-progress').textContent = 'تم الإيقاف.'; return; }
-        $('ai-progress').textContent = SAMPLE_ERRORS[code] || 'خطأ مؤقت في الاتصال. حاول مرة أخرى.';
+        if (code === 'cancelled') { aiNote('تم الإيقاف.'); return; }
+        aiNote(SAMPLE_ERRORS[code] || 'خطأ مؤقت في الاتصال. حاول مرة أخرى.');
         if (['not_granted', 'sampling_disabled', 'not_declared', 'capability_disabled', 'capability_removed'].indexOf(code) >= 0) {
           caps.sample = null;
           renderStatus();
@@ -764,25 +876,69 @@
   }
 
   // ------------------------------------------------------------------ wiring
-  function setTab(tab) {
+  function setTab(tab, chosen) {
     state.tab = tab;
+    if (chosen) state.tabChosen = true;
     $('tab-ai').setAttribute('aria-pressed', String(tab === 'ai'));
     $('tab-manual').setAttribute('aria-pressed', String(tab === 'manual'));
     $('panel-ai').hidden = tab !== 'ai';
     $('panel-manual').hidden = tab !== 'manual';
+    if (tab === 'manual') runManual(true);
+    else if (state.lastData) { state.lastSource = 'ai'; rerun(false); }
+  }
+  function setSide(side) {
+    state.side = side;
+    $('side-sell').setAttribute('aria-pressed', String(side === 'sell'));
+    $('side-buy').setAttribute('aria-pressed', String(side === 'buy'));
+    state.manualUsed = true;
+    runManual(true);
+  }
+  function addFiles(list) {
+    var max = (caps.images && caps.images.maxCount) || 4;
+    var picked = Array.prototype.slice.call(list || []).filter(function (f) { return /^image\//.test(f.type || ''); });
+    var before = state.files.length + picked.length;
+    state.files = state.files.concat(picked).slice(0, max);
+    aiNote(before > max ? 'الحد الأقصى للصور في المرة الواحدة:' : '');
+    if (before > max) $('ai-note').appendChild(el('pre', { class: 'code inline', dir: 'ltr', text: String(max) }));
+    renderThumbs();
+    renderStatus();
   }
   function wire() {
+    ['desk', 'journal', 'setup'].forEach(function (name) {
+      $('nav-' + name).addEventListener('click', function () { setView(name); });
+    });
+    $('acct-pill').addEventListener('click', function () { setView('setup'); $('fold-account').open = true; });
+    $('tab-ai').addEventListener('click', function () { setTab('ai', true); });
+    $('tab-manual').addEventListener('click', function () { setTab('manual', true); });
+    $('side-sell').addEventListener('click', function () { setSide('sell'); });
+    $('side-buy').addEventListener('click', function () { setSide('buy'); });
+    ['man-entry', 'man-stop', 'man-target', 'man-current'].forEach(function (id) {
+      $(id).addEventListener('input', function () { state.manualUsed = true; runManual(true); });
+    });
+
+    $('files').addEventListener('change', function () { addFiles($('files').files); $('files').value = ''; });
+    var drop = $('drop');
+    drop.addEventListener('dragover', function (ev) { ev.preventDefault(); drop.classList.add('over'); });
+    drop.addEventListener('dragleave', function () { drop.classList.remove('over'); });
+    drop.addEventListener('drop', function (ev) {
+      ev.preventDefault();
+      drop.classList.remove('over');
+      if (ev.dataTransfer) addFiles(ev.dataTransfer.files);
+    });
+    $('btn-run').addEventListener('click', runAnalysis);
+    $('btn-stop').addEventListener('click', function () { if (state.abort) state.abort.abort(); });
+
     ACCOUNT_FIELDS.forEach(function (f) {
-      $(f[0]).addEventListener('input', function () { state.account[f[1]] = price($(f[0]).value); saveSoon('account'); runManual(true); });
+      $(f[0]).addEventListener('input', function () { state.account[f[1]] = price($(f[0]).value); saveSoon('account'); renderAccount(); rerun(false); });
     });
-    $('btn-nopos').addEventListener('click', function () { state.account.open_positions = []; saveSoon('account'); renderAccount(); runManual(true); });
-    $('btn-unknownpos').addEventListener('click', function () { state.account.open_positions = null; saveSoon('account'); renderAccount(); runManual(true); });
-    $('sym-select').addEventListener('change', function () { state.symbol = $('sym-select').value; renderSymbol(); runManual(true); });
-    $('sym-mode').addEventListener('change', function () { state.symbols[state.symbol].calc_mode = $('sym-mode').value; saveSoon('symbols'); runManual(true); });
+    $('btn-nopos').addEventListener('click', function () { state.account.open_positions = []; saveSoon('account'); renderAccount(); rerun(false); });
+    $('btn-unknownpos').addEventListener('click', function () { state.account.open_positions = null; saveSoon('account'); renderAccount(); rerun(false); });
+    $('sym-select').addEventListener('change', function () { state.symbol = $('sym-select').value; renderSymbol(); rerun(false); });
+    $('sym-mode').addEventListener('change', function () { state.symbols[state.symbol].calc_mode = $('sym-mode').value; saveSoon('symbols'); rerun(false); });
     SPEC_FIELDS.forEach(function (f) {
-      $(f[0]).addEventListener('input', function () { state.symbols[state.symbol][f[1]] = price($(f[0]).value); saveSoon('symbols'); runManual(true); });
+      $(f[0]).addEventListener('input', function () { state.symbols[state.symbol][f[1]] = price($(f[0]).value); saveSoon('symbols'); rerun(false); });
     });
-    $('sym-confirmed').addEventListener('change', function () { state.symbols[state.symbol].confirmed = $('sym-confirmed').checked; saveSoon('symbols'); runManual(true); });
+    $('sym-confirmed').addEventListener('change', function () { state.symbols[state.symbol].confirmed = $('sym-confirmed').checked; saveSoon('symbols'); rerun(false); });
     $('form-addsym').addEventListener('submit', function (ev) {
       ev.preventDefault();
       var name = str($('sym-new').value).toUpperCase().replace(/[^A-Z0-9._#-]/g, '');
@@ -792,25 +948,7 @@
       $('sym-new').value = '';
       saveSoon('symbols');
       renderSymbol();
-      runManual(true);
-    });
-    $('tab-ai').addEventListener('click', function () { setTab('ai'); });
-    $('tab-manual').addEventListener('click', function () { setTab('manual'); });
-    $('files').addEventListener('change', function () {
-      var max = (caps.images && caps.images.maxCount) || 4;
-      var picked = Array.prototype.slice.call($('files').files || []);
-      state.files = state.files.concat(picked).slice(0, max);
-      $('files').value = '';
-      renderThumbs();
-      renderStatus();
-    });
-    $('btn-run').addEventListener('click', runAnalysis);
-    $('btn-stop').addEventListener('click', function () { if (state.abort) state.abort.abort(); });
-    $('form-manual').addEventListener('submit', function (ev) {
-      ev.preventDefault();
-      state.manualUsed = true;
-      runManual(false);
-      try { $('result').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) { /* older views */ }
+      rerun(false);
     });
   }
   function initCaps() {
@@ -834,12 +972,12 @@
   }
 
   if (!Calc) {
-    $('result').appendChild(el('p', { class: 'warn-text', text: 'تعذر تحميل مكتبة الحساب. أعد فتح الصفحة.' }));
+    $('result').appendChild(el('p', { text: 'تعذر تحميل مكتبة الحساب. أعد فتح الصفحة.' }));
     return;
   }
   loadLocal();
   wire();
-  setTab('manual');
   renderAll();
+  runManual(false);
   initCaps();
 })();

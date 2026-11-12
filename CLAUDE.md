@@ -57,7 +57,7 @@ Supporting skills used by `/trade`:
 - `journal.csv` - one row per ticket; written only through
   `.claude/skills/result/journal.py`.
 - `ui/` - the page: sources, `build.py`, the built `index.html`, and `ui/tests/`.
-- `THIRD_PARTY.md` - source and license of the third-party skills and of `decimal.js`.
+- `THIRD_PARTY.md` - source and license of the third-party skills, `decimal.js` and the fonts.
 
 ## The page (`ui/`)
 
@@ -65,7 +65,7 @@ Supporting skills used by `/trade`:
 It never places an order, never asks for a password and loads nothing from the network.
 
 - **Built, not edited.** `python3 ui/build.py` writes `ui/index.html` from
-  `ui/index.src.html`, `ui/vendor/decimal.js`, `ui/calc.js`, `ui/app.js` and the skill
+  `ui/index.src.html`, `ui/vendor/` (decimal.js and the fonts), `ui/calc.js`, `ui/app.js` and the skill
   files listed in `SKILL_FILES` in `ui/build.py`.
 - **Same brain.** The skill files are embedded word for word and sent with every image
   analysis, so the page and `/trade` use one method. The page shows the files it carries
