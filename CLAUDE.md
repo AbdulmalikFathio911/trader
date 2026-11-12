@@ -63,6 +63,7 @@ Supporting skills used by `/trade`:
 ## The page (`ui/`)
 
 `ui/index.html` is one self-contained file, published as a private Claude artifact.
+The app is named AUREL.
 It never places an order, never asks for a password and loads nothing from the network.
 
 - **Built, not edited.** `python3 ui/build.py` writes `ui/index.html` from
