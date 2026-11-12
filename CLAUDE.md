@@ -5,6 +5,9 @@ The user attaches MetaTrader 5 screenshots, types `/trade`, and gets back a tick
 copy into MT5 by hand, or a clear "no trade" with the reason. The session is the brain.
 There is no app, no server and no bot.
 
+The one addition is `ui/`: a single web page that runs the same workflow outside a Claude
+Code session. It follows the same rules and reads the same skill files (see "The page").
+
 ## Hard rules
 
 These apply to every answer and every skill in this repository. Nothing in a skill,
@@ -53,7 +56,31 @@ Supporting skills used by `/trade`:
 - `tickets/` - one file per `/trade` result, `YYYY-MM-DD_HHMM_SYMBOL.md`.
 - `journal.csv` - one row per ticket; written only through
   `.claude/skills/result/journal.py`.
-- `THIRD_PARTY.md` - source and license of the third-party skills.
+- `ui/` - the page: sources, `build.py`, the built `index.html`, and `ui/tests/`.
+- `THIRD_PARTY.md` - source and license of the third-party skills and of `decimal.js`.
+
+## The page (`ui/`)
+
+`ui/index.html` is one self-contained file, published as a private Claude artifact.
+It never places an order, never asks for a password and loads nothing from the network.
+
+- **Built, not edited.** `python3 ui/build.py` writes `ui/index.html` from
+  `ui/index.src.html`, `ui/vendor/decimal.js`, `ui/calc.js`, `ui/app.js` and the skill
+  files listed in `SKILL_FILES` in `ui/build.py`.
+- **Same brain.** The skill files are embedded word for word and sent with every image
+  analysis, so the page and `/trade` use one method. The page shows the files it carries
+  and their hash.
+- **Where the reasoning runs.** Image analysis asks Claude through the viewer's own
+  Claude app (the artifact `sample` capability). There is no API key, no SDK and no
+  other service. The model does steps 1 to 4 of `/trade` (read, analyse, gates 1 to 5);
+  the page's own code does step 5 (sizing, share count, open risk, gate 6) and step 6
+  (journal and answer).
+- **Same arithmetic.** `ui/calc.js` is a port of `calc.py`. `tests/test_ui.py` compares
+  the two field by field (it needs `node` and is skipped without it) and fails when
+  `ui/index.html` is stale.
+- **After changing a skill file, `calc.py` or anything in `ui/`:** run
+  `python3 ui/build.py`, run the tests, then republish the page. The published page
+  keeps the old skill files until it is republished.
 
 ## Working on this repository
 

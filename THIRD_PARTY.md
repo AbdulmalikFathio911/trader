@@ -1,7 +1,15 @@
 # Third-party material
 
-Two skills in this repository are copied from an open-source project. Everything else was
-written for this repository.
+Two skills in this repository are copied from an open-source project, and the page in
+`ui/` carries one arithmetic library. Everything else was written for this repository.
+
+## decimal.js
+
+- Source: https://github.com/MikeMcl/decimal.js (npm package `decimal.js`, version 10.4.3)
+- License: MIT, Copyright (c) 2022 Michael Mclaughlin. Full text: `ui/vendor/decimal.LICENCE.md`
+- Path in this repository: `ui/vendor/decimal.js`, unchanged
+- Why: `ui/calc.js` needs exact decimal arithmetic to match `calc.py`. The file is inlined
+  into `ui/index.html` by `ui/build.py`, so the page loads nothing from the network.
 
 ## claude-trading-skills
 

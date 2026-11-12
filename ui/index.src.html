@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>مكتب الصفقات</title>
+<style>
+/* Layout idea: a working desk. Inputs in one column, the ticket beside it, the journal underneath. */
+:root {
+  --bg: #eef1f5;
+  --surface: #ffffff;
+  --ink: #15212c;
+  --muted: #586675;
+  --line: #d3dae2;
+  --accent: #0b5f7c;
+  --accent-ink: #ffffff;
+  --code-bg: #f2f5f8;
+  --ok: #1a6f45;    --ok-bg: #e1f2e8;
+  --warn: #8f5200;  --warn-bg: #fbeed9;
+  --bad: #ab231c;   --bad-bg: #fbe4e2;
+  /* System fonts only: the page loads nothing from the network. */
+  --font-display: system-ui, -apple-system, "Segoe UI", "Geeza Pro", "Noto Sans Arabic", Tahoma, sans-serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", "Geeza Pro", "Noto Sans Arabic", Tahoma, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e151d; --surface: #16202b; --ink: #e7edf3; --muted: #9babb9; --line: #2a3745;
+    --accent: #5bb9da; --accent-ink: #06222d; --code-bg: #0f1821;
+    --ok: #66d19d; --ok-bg: #12301f; --warn: #f0b660; --warn-bg: #35270f; --bad: #ff8f85; --bad-bg: #3a1917;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e151d; --surface: #16202b; --ink: #e7edf3; --muted: #9babb9; --line: #2a3745;
+  --accent: #5bb9da; --accent-ink: #06222d; --code-bg: #0f1821;
+  --ok: #66d19d; --ok-bg: #12301f; --warn: #f0b660; --warn-bg: #35270f; --bad: #ff8f85; --bad-bg: #3a1917;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.7; }
+.page { max-width: 1120px; margin: 0 auto; padding: 20px 16px 48px; display: flex; flex-direction: column; gap: 16px; }
+header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+h1 { font-family: var(--font-display); font-weight: 700; font-size: 1.7rem; margin: 0; line-height: 1.3; text-wrap: balance; }
+h2 { font-family: var(--font-display); font-weight: 600; font-size: 1.1rem; margin: 0 0 10px; text-wrap: balance; }
+h3 { font-size: 0.95rem; font-weight: 600; margin: 16px 0 6px; color: var(--muted); }
+p { margin: 0 0 8px; }
+.sub { color: var(--muted); margin: 2px 0 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.82rem; border: 1px solid var(--line); background: var(--surface); color: var(--muted); white-space: nowrap; }
+.chip.ok { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.chip.warn { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+.grid { display: grid; gap: 16px; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); align-items: start; }
+.stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+label.field { display: flex; flex-direction: column; gap: 2px; font-size: 0.86rem; color: var(--muted); }
+input, select, button { font: inherit; color: inherit; }
+input[type="text"], select { width: 100%; min-height: 42px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font-size: 16px; }
+input[dir="ltr"] { font-family: var(--font-mono); text-align: left; }
+input.small { width: 84px; min-height: 36px; margin-top: 4px; }
+input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button { min-height: 42px; padding: 6px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.link { min-height: 0; padding: 0; border: 0; background: none; color: var(--accent); text-decoration: underline; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.check { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 0.92rem; }
+.check input { width: 18px; height: 18px; }
+.tabs { display: flex; gap: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 12px; }
+.tabs button { flex: 1; border: 0; border-radius: 0; background: var(--bg); color: var(--muted); }
+.tabs button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.hint { color: var(--muted); font-size: 0.88rem; }
+.warn-text { color: var(--warn); }
+pre.code { margin: 6px 0; padding: 10px 12px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; font-family: var(--font-mono); font-size: 0.86rem; line-height: 1.6; text-align: left; overflow-x: auto; white-space: pre; font-variant-numeric: tabular-nums; }
+pre.code.ticket { font-size: 1rem; border-color: var(--accent); border-inline-start-width: 4px; }
+pre.code.inline { display: inline-block; margin: 4px 0 0; padding: 2px 8px; }
+pre.code.file { max-height: 320px; overflow: auto; white-space: pre-wrap; font-size: 0.8rem; }
+details { border-top: 1px solid var(--line); padding: 6px 0; }
+summary { cursor: pointer; font-family: var(--font-mono); font-size: 0.86rem; text-align: left; }
+.verdict { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: 8px; margin-bottom: 8px; border-inline-start: 5px solid; }
+.verdict strong { font-family: var(--font-display); font-size: 1.25rem; font-weight: 600; }
+.verdict.ok { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+.verdict.warn { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+.verdict.bad { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+ul.warnings, ul.reminders { margin: 6px 0; padding-inline-start: 20px; }
+ul.reminders { color: var(--muted); font-size: 0.88rem; margin-top: 16px; border-top: 1px solid var(--line); padding-top: 10px; }
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin: 10px 0; }
+.thumb { margin: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--bg); }
+.thumb img { display: block; width: 100%; height: 84px; object-fit: cover; }
+.thumb figcaption { display: flex; justify-content: space-between; gap: 6px; padding: 4px 8px; font-size: 0.8rem; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: start; vertical-align: top; white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; }
+td[dir="ltr"] { font-family: var(--font-mono); text-align: left; font-variant-numeric: tabular-nums; }
+td.empty { color: var(--muted); white-space: normal; }
+td select { min-height: 36px; width: 110px; }
+@media (max-width: 860px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <div>
+      <h1>مكتب الصفقات</h1>
+      <p class="sub">تذكرة جاهزة للنسخ اليدوي، أو قرار لا صفقة مع السبب.</p>
+    </div>
+    <div class="chips" id="status"></div>
+  </header>
+  <p class="hint warn-text" id="store-note" hidden></p>
+
+  <div class="grid">
+    <div class="stack">
+      <section class="card" aria-labelledby="h-account">
+        <h2 id="h-account">الحساب</h2>
+        <div class="fields">
+          <label class="field" for="acc-balance">الرصيد<input type="text" inputmode="decimal" dir="ltr" id="acc-balance"></label>
+          <label class="field" for="acc-free">الهامش الحر<input type="text" inputmode="decimal" dir="ltr" id="acc-free"></label>
+          <label class="field" for="acc-leverage">الرافعة<input type="text" inputmode="decimal" dir="ltr" id="acc-leverage"></label>
+          <label class="field" for="acc-risk">المخاطرة للصفقة بالمئة<input type="text" inputmode="decimal" dir="ltr" id="acc-risk"></label>
+          <label class="field" for="acc-maxopen">حد المخاطرة المفتوحة بالمئة<input type="text" inputmode="decimal" dir="ltr" id="acc-maxopen"></label>
+          <label class="field" for="acc-maxpos">حد حجم المركز بالمئة<input type="text" inputmode="decimal" dir="ltr" id="acc-maxpos"></label>
+        </div>
+        <h3>الصفقات المفتوحة</h3>
+        <div id="positions"></div>
+        <div class="row">
+          <button type="button" id="btn-nopos">لا توجد صفقات مفتوحة</button>
+          <button type="button" class="link" id="btn-unknownpos">غير معروفة</button>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="h-symbol">
+        <h2 id="h-symbol">الرمز والمواصفات</h2>
+        <div class="fields">
+          <label class="field" for="sym-select">الرمز<select id="sym-select" dir="ltr"></select></label>
+          <label class="field" for="sym-mode">طريقة الحساب
+            <select id="sym-mode" dir="ltr">
+              <option value="forex">Forex</option>
+              <option value="cfd_leverage">CFD Leverage</option>
+              <option value="cfd">CFD</option>
+              <option value="stocks">Exchange Stocks</option>
+            </select>
+          </label>
+          <label class="field" for="sym-contract">حجم العقد<input type="text" inputmode="decimal" dir="ltr" id="sym-contract"></label>
+          <label class="field" for="sym-digits">الخانات العشرية<input type="text" inputmode="numeric" dir="ltr" id="sym-digits"></label>
+          <label class="field" for="sym-minlot">أصغر حجم<input type="text" inputmode="decimal" dir="ltr" id="sym-minlot"></label>
+          <label class="field" for="sym-step">خطوة الحجم<input type="text" inputmode="decimal" dir="ltr" id="sym-step"></label>
+          <label class="field" for="sym-leverage">رافعة خاصة بالرمز<input type="text" inputmode="decimal" dir="ltr" id="sym-leverage"></label>
+          <label class="field" for="sym-q2a">تحويل عملة الربح للحساب<input type="text" inputmode="decimal" dir="ltr" id="sym-q2a"></label>
+          <label class="field" for="sym-stops">حد المسافة بالنقاط<input type="text" inputmode="numeric" dir="ltr" id="sym-stops"></label>
+        </div>
+        <label class="check" for="sym-confirmed"><input type="checkbox" id="sym-confirmed">أكدت هذه القيم من شاشة المواصفات في البرنامج</label>
+        <form class="row" id="form-addsym">
+          <label class="field" for="sym-new" style="flex:1">رمز جديد<input type="text" dir="ltr" id="sym-new" autocomplete="off"></label>
+          <button type="submit">أضف الرمز</button>
+        </form>
+      </section>
+
+      <section class="card" aria-labelledby="h-trade">
+        <h2 id="h-trade">الصفقة</h2>
+        <div class="tabs">
+          <button type="button" id="tab-manual" aria-pressed="true">أرقام يدوية</button>
+          <button type="button" id="tab-ai" aria-pressed="false">من صور الشارت</button>
+        </div>
+
+        <div id="panel-manual">
+          <form id="form-manual">
+            <div class="fields">
+              <label class="field" for="man-side">الاتجاه
+                <select id="man-side"><option value="sell">بيع</option><option value="buy">شراء</option></select>
+              </label>
+              <label class="field" for="man-entry">سعر الدخول<input type="text" inputmode="decimal" dir="ltr" id="man-entry" value="1.1100"></label>
+              <label class="field" for="man-stop">وقف الخسارة<input type="text" inputmode="decimal" dir="ltr" id="man-stop" value="1.1110"></label>
+              <label class="field" for="man-target">الهدف<input type="text" inputmode="decimal" dir="ltr" id="man-target" value="1.1080"></label>
+              <label class="field" for="man-current">السعر الحالي<input type="text" inputmode="decimal" dir="ltr" id="man-current" value="1.1082"></label>
+            </div>
+            <div class="row"><button type="submit" class="primary">احسب</button></div>
+          </form>
+          <p class="hint">تختار الاتجاه والمستويات بنفسك، والحاسبة تفحص الحجم والمخاطرة والهامش فقط.</p>
+        </div>
+
+        <div id="panel-ai" hidden>
+          <p class="hint">ارفع شارت نفس الرمز على أكثر من فريم (الأفضل الأسبوعي ثم أربع ساعات ثم الساعة)، ومعها صورة تبويب التداول إن وجدت.</p>
+          <label class="field" for="files">صور من البرنامج<input type="file" id="files" accept="image/png,image/jpeg,image/webp" multiple></label>
+          <div class="thumbs" id="thumbs"></div>
+          <div class="row">
+            <button type="button" class="primary" id="btn-run" disabled>حلّل الصور</button>
+            <button type="button" id="btn-stop" hidden>أوقف</button>
+          </div>
+          <p class="hint" id="ai-progress" role="status"></p>
+          <p class="hint warn-text" id="ai-unavailable" hidden>التحليل بالصور غير متاح في هذا العرض. افتح الصفحة من داخل التطبيق وأنت مسجل الدخول. الحاسبة اليدوية تعمل.</p>
+        </div>
+      </section>
+    </div>
+
+    <section class="card" aria-labelledby="h-result">
+      <h2 id="h-result">النتيجة</h2>
+      <div id="result" aria-live="polite"></div>
+    </section>
+  </div>
+
+  <section class="card" aria-labelledby="h-journal">
+    <h2 id="h-journal">السجل</h2>
+    <div id="stats"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>رقم</th><th>الوقت</th><th>الرمز والنوع</th><th>دخول / وقف / هدف</th><th>حجم / مخاطرة / عائد</th><th>القرار</th><th>النتيجة والمبلغ</th><th></th></tr></thead>
+        <tbody id="journal-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="h-skills">
+    <h2 id="h-skills">عقل التحليل: ملفات المهارات من المستودع</h2>
+    <p class="hint">التحليل بالصور يقرأ هذه الملفات كاملة كما هي في المستودع في كل مرة. عند تغيير المهارات في المستودع تُعاد بناء الصفحة ونشرها.</p>
+    <div id="skills"></div>
+  </section>
+</div>
+<script type="application/json" id="skill-files">/*__SKILLS_JSON__*/</script>
+<script>/*__DECIMAL_JS__*/</script>
+<script>/*__CALC_JS__*/</script>
+<script>/*__APP_JS__*/</script>
+</body>
+</html>
