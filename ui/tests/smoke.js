@@ -187,7 +187,8 @@ function eurusd(overrides) {
   check('weekly warning', text().includes('لا يوجد شارت أسبوعي'));
   check('order line warning', text().includes('يوجد على الشارت أمر') && text().includes('SELL LIMIT 0.02 at 4015.00'));
   check('skipped candidate warning', text().includes('المستوى التالي'));
-  check('coverage chips', Array.from($('result').querySelectorAll('.cover span')).map((s) => s.className).join(',') === 'missing,yes,missing,yes');
+  check('coverage chips', Array.from($('result').querySelectorAll('.cover span')).map((s) => s.className).join(',') === 'missing,yes,missing,yes,missing');
+  check('news not checked is said', text().includes('لم تُفحص الأخبار') && text().includes('دليل: سياق السوق') && text().includes('no calendar screenshot'), text());
   check('ticket age shown', $('ticket-age') && $('ticket-age').textContent === '0' && !$('btn-copy').disabled);
   check('journal card with report', !!card(3) && card(3).textContent.includes('EURUSD Sell Limit') && card(3).textContent.includes('تقرير التحليل'));
   check('db journal write', writes.some((w) => w[0] === 'set' && w[1] === 'journal/3' && w[2].verdict === 'OK' && w[2].report && w[2].source === 'photos'));
@@ -234,6 +235,39 @@ function eurusd(overrides) {
   sampleReply = eurusd((d) => { d.setup.decision = 'no_trade'; d.setup.failed_gate = 1; d.setup.reason_ar = 'الفريم الأعلى عرضي.'; });
   await analyse();
   check('model gate no trade', text().includes('GATE 1') && text().includes('الفريم الأعلى عرضي'), text());
+
+  // 11b. photos: the news analyst (calendar screenshot) can only block or warn
+  const pad = (n) => String(n).padStart(2, '0');
+  const at = (minutes) => { const d = new Date(Date.now() + minutes * 60000); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+  const withNews = (events, extra) => eurusd((d) => {
+    d.images.push({ n: d.images.length + 1, kind: 'calendar' });
+    d.news = Object.assign({ checked: true, source_image: d.images.length, events: events, context_ar: 'تقويم اليوم.', against_trade: false }, extra || {});
+  });
+  let callsBefore = sampleCalls;
+  sampleReply = withNews([{ when: at(45), kind: 'release', currency: 'USD', symbol: null, impact: 'high', title_ar: 'بيانات التضخم' }]);
+  await analyse();
+  check('near high-impact news blocks the ticket', stamp() === 'لا صفقة' && text().includes('NEWS_EVENT') && text().includes('within two hours') && text().includes('بيانات التضخم'), text());
+  check('no second reading is spent on a blocked ticket', sampleCalls === callsBefore + 1, sampleCalls - callsBefore);
+  check('journal keeps the news reason', Array.from(doc.querySelectorAll('#journal-list .jcard')).some((c) => c.textContent.includes('NEWS_EVENT')));
+  check('calendar chip is on', Array.from($('result').querySelectorAll('.cover span')).map((s) => s.className).join(',') === 'missing,yes,missing,yes,yes');
+  sampleReply = withNews([{ when: null, kind: 'release', currency: 'EUR', symbol: null, impact: 'high', title_ar: 'قرار الفائدة' }]);
+  await analyse();
+  check('high-impact news without a time blocks', text().includes('NEWS_EVENT') && text().includes('time missing'), text());
+  sampleReply = withNews([{ when: at(30), kind: 'release', currency: 'JPY', symbol: null, impact: 'high', title_ar: 'خبر ياباني' },
+                          { when: at(30), kind: 'release', currency: 'USD', symbol: null, impact: 'low', title_ar: 'خبر ضعيف' },
+                          { when: at(300), kind: 'release', currency: 'USD', symbol: null, impact: 'high', title_ar: 'خبر لاحق' }], { against_trade: true });
+  await analyse();
+  check('other currencies and low impact do not block; later news warns', stamp() === 'تذكرة جاهزة' && text().includes('خبر مهم لاحقاً') && text().includes('not relevant') && text().includes('not high importance') && text().includes('تعاكس اتجاه الصفقة') && !text().includes('لم تُفحص الأخبار'), text());
+  sampleReply = withNews([{ when: at(-200), kind: 'release', currency: 'USD', symbol: null, impact: 'high', title_ar: 'خبر قديم' }]);
+  await analyse();
+  check('old news does not block', stamp() === 'تذكرة جاهزة' && text().includes('outside the window'), text());
+  sampleReply = eurusd((d) => { d.news = { checked: true, events: [], context_ar: '', against_trade: false }; });
+  await analyse();
+  check('a news claim without a calendar image is not trusted', stamp() === 'تذكرة جاهزة' && text().includes('لم تُفحص الأخبار'), text());
+  sampleReply = withNews([{ when: at(20), kind: 'release', currency: 'USD', symbol: null, impact: 'high', title_ar: 'خبر' }], {});
+  sampleReply.setup.decision = 'no_trade'; sampleReply.setup.failed_gate = 2;
+  await analyse();
+  check('news never turns a no trade into a ticket', stamp() === 'لا صفقة' && text().includes('GATE 2') && text().includes('خبر مهم قريب'), text());
 
   // 12. photos: an analysis error offers a retry
   sampleReply = { __error: { code: 'upstream_error', message: 'x' } };
