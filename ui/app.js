@@ -11,6 +11,8 @@
   var D = Calc ? Calc.Decimal : null;
   var LS_KEY = 'mt5-trade-desk.v1';
   var MIN_REWARD_RISK = '1.5';
+  var STALE_MINUTES = 10;      // a ticket older than this is checked against the price again
+  var NEWS_LOCK_MINUTES = 120;
 
   // ---------------------------------------------------------------- helpers
   function $(id) { return document.getElementById(id); }
@@ -34,6 +36,16 @@
     return node;
   }
   function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+  function isNum(v) { return /^(\d+\.?\d*|\.\d+)$/.test(price(v)); }
+  function dec(v) { try { return isNum(v) ? new D(price(v)) : null; } catch (e) { return null; } }
+  var toastTimer = null;
+  function toast(text) {
+    var box = $('toast');
+    box.textContent = text;
+    box.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { box.hidden = true; }, 2400);
+  }
   function pad(label, width) { while (label.length < width) label += ' '; return label; }
   function block(lines) {   // [[label, value], ...] -> left-to-right code block
     var width = lines.reduce(function (w, l) { return Math.max(w, l[0].length + 2); }, 0);
@@ -48,6 +60,7 @@
   }
   var DEFAULT_ACCOUNT = { balance: '102', free_margin: '26.73', leverage: '15', currency: 'USD',
                           risk_pct: '1', max_open_risk_pct: '6', max_position_pct: '25',
+                          max_daily_losses: '2', news_lock_until: null,
                           open_positions: null, updated_at: null };
   var DEFAULT_SYMBOLS = {
     EURUSD: spec('forex', '100000', 5, '0.01', '0.01'),
@@ -60,7 +73,9 @@
   var state = { account: clone(DEFAULT_ACCOUNT), symbols: clone(DEFAULT_SYMBOLS), journal: [],
                 files: [], tab: 'ai', tabChosen: false, view: 'desk', side: 'sell', busy: false, abort: null,
                 touched: false, symbol: 'EURUSD', storeNote: '', manualUsed: false,
-                lastSource: 'manual', lastData: null, lastNotes: null };
+                lastSource: 'manual', lastData: null, lastNotes: null, lastFiles: [], second: null,
+                currentOverride: '', lastMadeAt: 0, lastRender: null, saving: 0, loading: true,
+                introClosed: false };
   var caps = { sample: null, sampleKnown: false, db: null, dbKnown: false, images: null };
 
   // ------------------------------------------------------------ persistence
@@ -81,12 +96,13 @@
   }
   function dbWrite(path, work) {   // one write at a time per document
     if (!caps.db) return;
+    state.saving++;
     chains[path] = (chains[path] || Promise.resolve()).then(work).catch(function (e) {
       state.storeNote = e && e.code === 'quota_exceeded'
         ? 'مساحة الحفظ ممتلئة. احذف صفوفاً قديمة من السجل.'
         : 'تعذر الحفظ السحابي الآن. البيانات محفوظة على هذا المتصفح فقط.';
-      renderStatus();
-    });
+    }).then(function () { state.saving--; renderStatus(); });
+    renderStatus();
   }
   function saveSoon(kind) {
     state.touched = true;
@@ -115,6 +131,8 @@
   function loadFromDb() {
     var timer = setTimeout(function () {
       state.storeNote = 'لم يصل الحفظ السحابي بعد. المعروض هو نسخة هذا المتصفح.';
+      state.loading = false;
+      renderJournal();
       renderStatus();
     }, 10000);
     Promise.all([
@@ -124,6 +142,7 @@
     ]).then(function (r) {
       clearTimeout(timer);
       state.storeNote = '';
+      state.loading = false;
       var hadRemote = r[0].exists || r[1].exists || r[2].size > 0;
       if (hadRemote && !state.touched) {
         if (r[0].exists) state.account = Object.assign(clone(DEFAULT_ACCOUNT), r[0].data());
@@ -134,10 +153,13 @@
       } else if (!hadRemote && state.journal.length) {
         state.journal.forEach(saveRow);   // first cloud visit: keep what this browser already had
       }
+      renderJournal();
       renderStatus();
     }).catch(function () {
       clearTimeout(timer);
       state.storeNote = 'تعذر قراءة الحفظ السحابي. المعروض هو نسخة هذا المتصفح.';
+      state.loading = false;
+      renderJournal();
       renderStatus();
     });
   }
@@ -174,7 +196,14 @@
     GATE_2: 'بوابة التقدير: تقدير السيناريو الأساسي أقل من خمسين بالمئة.',
     GATE_3: 'بوابة الدخول: لا يوجد مستوى دخول صالح أو السعر الحالي غير مقروء.',
     GATE_4: 'بوابة الوقف: لا يوجد سعر مطبوع بعد مستوى الإبطال.',
-    GATE_5: 'بوابة الهدف: لا يوجد مستوى تالٍ في اتجاه الصفقة.'
+    GATE_5: 'بوابة الهدف: لا يوجد مستوى تالٍ في اتجاه الصفقة.',
+    NEWS_LOCK: 'قفل الأخبار مفعّل. لا تذاكر حتى ينتهي أو تلغيه.',
+    DAILY_LIMIT: 'وصلت حد الخسائر اليومي. لا تذاكر جديدة اليوم.',
+    NEEDS_SECOND: 'الأرقام سليمة، وتبقى قراءة ثانية مستقلة للصور قبل إصدار التذكرة.',
+    SECOND_OPINION: 'القراءة الثانية للصور لم تتفق مع الأولى، فلا تذكرة.',
+    SECOND_FAILED: 'تعذرت القراءة الثانية، ولا تصدر تذكرة بدون تحقق.',
+    STALE_PRICE: 'السعر تحرك وتجاوز مستوى من مستويات التذكرة. التذكرة لم تعد صالحة.',
+    INCOMPLETE: 'اكتب سعر الدخول ووقف الخسارة والهدف والسعر الحالي.'
   };
   var WARN = {
     STOP_INSIDE_STOPS_LEVEL: 'الوقف أقرب من الحد الأدنى للوسيط، وقد يرفضه البرنامج.',
@@ -184,7 +213,10 @@
     UNCONFIRMED_SPEC: 'مواصفات الرمز غير مؤكدة من شاشة المواصفات. الحجم والمخاطرة والهامش تعتمد عليها.',
     NOT_WEEKLY: 'لا يوجد شارت أسبوعي. طريقة التحليل مكتوبة للأسبوعي، فالنتيجة دليل أضعف.',
     ONE_SIDED_PRICE: 'سعر العرض أو الطلب غير مقروء، فاستُعمل السعر المتاح لتحديد نوع الأمر.',
-    SIZER_CAP: 'عدد الأسهم محدود بحد حجم المركز وليس بالمخاطرة.'
+    SIZER_CAP: 'عدد الأسهم محدود بحد حجم المركز وليس بالمخاطرة.',
+    ORDER_LINES: 'يوجد على الشارت أمر أو صفقة لنفس الرمز. تأكد أنه لا يتعارض مع هذه التذكرة.',
+    CANDIDATE_SKIPPED: 'مستوى الدخول الأقرب لم ينجح في الحساب، فاستُعمل المستوى التالي من نفس التحليل.',
+    SECOND_LEVELS: 'القراءة الثانية وافقت على الاتجاه واقترحت مستويات أخرى. بقيت مستويات القراءة الأولى.'
   };
   var SAMPLE_ERRORS = {
     not_granted: 'لم يُسمح للصفحة باستعمال التحليل. الحاسبة اليدوية تعمل.',
@@ -316,6 +348,16 @@
       res.reasons.push(reason('OPEN_RISK_OVER', [['Failed', 'OPEN_RISK'], ['Open risk after', after.toFixed(2) + ' ' + cur], ['Allowed', allowed.toFixed(2) + ' ' + cur]]));
       return res;
     }
+    var lockLeft = newsLockLeft();
+    if (lockLeft > 0) {
+      res.reasons.push(reason('NEWS_LOCK', [['Failed', 'NEWS_LOCK'], ['Minutes left', String(lockLeft)]]));
+      return res;
+    }
+    var maxLoss = parseInt(str(acct.max_daily_losses), 10), lost = lossesToday();
+    if (maxLoss > 0 && lost >= maxLoss) {
+      res.reasons.push(reason('DAILY_LIMIT', [['Failed', 'DAILY_LIMIT'], ['Losses today', String(lost)], ['Daily limit', String(maxLoss)]]));
+      return res;
+    }
     codes.forEach(function (c) { if (WARN[c]) res.warnings.push({ ar: WARN[c] }); });
     res.verdict = 'OK';
     res.ticketText = out.ticket_text;
@@ -323,30 +365,101 @@
   }
 
   // ---------------------------------------------------------------- journal
+  var CSV_COLUMNS = ['id', 'time', 'symbol', 'side', 'type', 'entry', 'stop', 'target', 'lots', 'risk',
+                     'reward_risk', 'scenario_estimate', 'verdict', 'result', 'pnl'];
   function nextId() {
     return state.journal.reduce(function (m, r) { return Math.max(m, Number(r.id) || 0); }, 0) + 1;
   }
-  function addJournal(res) {
+  function addJournal(res, data) {
     var out = res.calc || {}, t = res.trade || {};
     var row = { id: nextId(), time: new Date().toISOString(), symbol: str(t.symbol), side: str(t.side),
       type: str(out.order_type), entry: str(t.entry), stop: str(t.stop), target: str(t.target),
       lots: res.verdict === 'OK' ? str(out.lots) : '', risk: res.verdict === 'OK' ? str(out.risk) : '',
       reward_risk: str(out.reward_risk), scenario_estimate: str(t.estimate),
-      verdict: res.verdict === 'OK' ? 'OK' : 'NO_TRADE', result: '', pnl: '' };
+      verdict: res.verdict === 'OK' ? 'OK' : 'NO_TRADE', result: '', pnl: '',
+      reason: res.verdict === 'OK' ? '' : str(res.reasons[0] && res.reasons[0].code),
+      source: data ? 'photos' : 'manual', closed_at: '', review: null,
+      report: data ? clone({ images: data.images || [], charts: data.charts || [], setup: data.setup || {}, opinion_ar: str(data.opinion_ar) }) : null };
     state.journal.push(row);
     saveRow(row);
     renderJournal();
     return row.id;
   }
+  function lossesToday() {
+    var today = new Date().toDateString();
+    return state.journal.filter(function (r) {
+      if (r.result !== 'loss') return false;
+      var when = new Date(str(r.closed_at) || str(r.time));
+      return !isNaN(when) && when.toDateString() === today;
+    }).length;
+  }
+  function newsLockLeft() {   // minutes left on the news lock, 0 when it is off
+    var until = Date.parse(str(state.account.news_lock_until));
+    if (isNaN(until)) return 0;
+    return Math.max(0, Math.ceil((until - Date.now()) / 60000));
+  }
+  function csvField(v) { var t = str(v); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; }
+  function toCsv() {
+    var rows = state.journal.slice().sort(function (a, b) { return Number(a.id) - Number(b.id); });
+    return [CSV_COLUMNS.join(',')].concat(rows.map(function (r) {
+      return CSV_COLUMNS.map(function (c) { return csvField(r[c]); }).join(',');
+    })).join('\n') + '\n';
+  }
+  function parseCsv(text) {   // small CSV reader: quoted fields, doubled quotes
+    var rows = [], row = [], field = '', quoted = false, i, ch;
+    for (i = 0; i < text.length; i++) {
+      ch = text.charAt(i);
+      if (quoted) {
+        if (ch === '"' && text.charAt(i + 1) === '"') { field += '"'; i++; }
+        else if (ch === '"') quoted = false;
+        else field += ch;
+      } else if (ch === '"') quoted = true;
+      else if (ch === ',') { row.push(field); field = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && text.charAt(i + 1) === '\n') i++;
+        row.push(field); field = '';
+        if (row.length > 1 || row[0] !== '') rows.push(row);
+        row = [];
+      } else field += ch;
+    }
+    row.push(field);
+    if (row.length > 1 || row[0] !== '') rows.push(row);
+    return rows;
+  }
+  function importCsv(text) {   // returns { added, updated } or throws an Arabic message
+    var rows = parseCsv(str(text));
+    if (!rows.length) throw 'النص فارغ.';
+    if (rows[0].join(',') !== CSV_COLUMNS.join(',')) throw 'السطر الأول لا يطابق أعمدة ملف السجل.';
+    var added = 0, updated = 0;
+    rows.slice(1).forEach(function (cells, n) {
+      if (cells.length !== CSV_COLUMNS.length) throw 'سطر بعدد أعمدة غير صحيح. رقمه في النص: ' + (n + 2);
+      var item = {};
+      CSV_COLUMNS.forEach(function (c, i) { item[c] = str(cells[i]); });
+      if (!/^\d+$/.test(item.id)) throw 'رقم تذكرة غير صحيح في السطر: ' + (n + 2);
+      item.id = Number(item.id);
+      item.verdict = item.verdict === 'OK' ? 'OK' : 'NO_TRADE';
+      var old = state.journal.filter(function (r) { return Number(r.id) === item.id; })[0];
+      if (old) { Object.assign(old, item); saveRow(old); updated++; }
+      else { state.journal.push(Object.assign({ reason: '', source: 'import', closed_at: '', review: null, report: null }, item)); saveRow(state.journal[state.journal.length - 1]); added++; }
+    });
+    return { added: added, updated: updated };
+  }
 
   // -------------------------------------------------------------- rendering
-  var STAMP = { OK: 'تذكرة جاهزة', NO_TRADE: 'لا صفقة', INVALID: 'أرقام ناقصة' };
+  var STAMP = { OK: 'تذكرة جاهزة', NO_TRADE: 'لا صفقة', INVALID: 'أرقام ناقصة', INCOMPLETE: 'أكمل الأرقام', SETUP: 'تم التحديث' };
   var STUB = [['Risk', 'المخاطرة'], ['Reward:Risk', 'العائد إلى المخاطرة'],
               ['Margin', 'الهامش المطلوب'], ['Free margin after', 'الهامش الحر بعدها']];
 
   function chip(label, kind) { return el('span', { class: 'chip ' + kind, text: label }); }
   function fold(title, kids, open) {
     return el('details', open ? { open: '' } : {}, [el('summary', { text: title })].concat(kids));
+  }
+
+  function renderNews() {
+    var left = newsLockLeft(), on = left > 0;
+    $('news-lock').setAttribute('aria-pressed', String(on));
+    $('news-text').textContent = on ? 'قفل الأخبار مفعّل. الدقائق الباقية:' : 'يوجد خبر مهم قريب؟ أوقف التذاكر ساعتين';
+    $('news-left').textContent = on ? String(left) : '';
   }
 
   function renderStatus() {
@@ -357,20 +470,42 @@
     else box.appendChild(chip(caps.sample ? 'التحليل بالصور: متاح' : 'التحليل بالصور: غير متاح هنا', caps.sample ? 'ok' : 'warn'));
     if (!caps.dbKnown) box.appendChild(chip('الحفظ: جاري التحقق', 'neutral'));
     else box.appendChild(chip(caps.db ? 'الحفظ: سحابي' : 'الحفظ: على هذا المتصفح فقط', caps.db ? 'ok' : 'warn'));
+    if (caps.db) box.appendChild(chip(state.saving > 0 ? 'جاري الحفظ' : 'كل التغييرات محفوظة', state.saving > 0 ? 'warn' : 'ok'));
     $('store-note').textContent = state.storeNote;
     $('store-note').hidden = !state.storeNote;
-    $('btn-run').disabled = state.busy || !caps.sample || !state.files.length || !SKILLS.files.length;
-    $('btn-run').hidden = state.busy;
+
+    var run = $('btn-run');
+    var ready = !!caps.sample && state.files.length > 0 && SKILLS.files.length > 0;
+    run.hidden = state.busy;
+    run.disabled = state.busy || !ready;
+    run.textContent = !caps.sampleKnown ? 'جاري التحقق من التحليل' : !caps.sample ? 'التحليل غير متاح هنا'
+      : !state.files.length ? 'اختر صورة أولاً' : 'حلّل وأخرج التذكرة';
     $('working').hidden = !state.busy;
     $('ai-unavailable').hidden = !caps.sampleKnown || !!caps.sample;
+    $('intro').hidden = state.introClosed || !!state.account.updated_at || !caps.sample;
     if (caps.sampleKnown && !caps.sample && state.tab === 'ai' && !state.tabChosen) setTab('manual');
+    renderNews();
   }
 
   var ACCOUNT_FIELDS = [['acc-balance', 'balance'], ['acc-free', 'free_margin'], ['acc-leverage', 'leverage'],
-                        ['acc-risk', 'risk_pct'], ['acc-maxopen', 'max_open_risk_pct'], ['acc-maxpos', 'max_position_pct']];
+                        ['acc-risk', 'risk_pct'], ['acc-maxopen', 'max_open_risk_pct'], ['acc-maxpos', 'max_position_pct'],
+                        ['acc-maxloss', 'max_daily_losses']];
   var SPEC_FIELDS = [['sym-contract', 'contract_size'], ['sym-digits', 'digits'], ['sym-minlot', 'min_lot'],
                      ['sym-step', 'lot_step'], ['sym-leverage', 'leverage'], ['sym-q2a', 'quote_to_account'],
                      ['sym-stops', 'stops_level']];
+  var OPTIONAL_FIELDS = ['sym-leverage', 'sym-stops'];
+
+  function validateSetup() {   // mark non-numeric setup fields; the calculator refuses them anyway
+    var bad = 0;
+    ACCOUNT_FIELDS.concat(SPEC_FIELDS).forEach(function (f) {
+      var v = str($(f[0]).value);
+      var wrong = v === '' ? OPTIONAL_FIELDS.indexOf(f[0]) < 0 : !isNum(v);
+      $(f[0]).setAttribute('aria-invalid', String(wrong));
+      if (wrong) bad++;
+    });
+    $('acc-errors').textContent = bad ? 'توجد خانات فارغة أو ليست أرقاماً. الخانات المعلّمة بالأحمر تمنع إصدار التذاكر.' : '';
+    $('acc-errors').hidden = !bad;
+  }
 
   function renderAccount() {
     ACCOUNT_FIELDS.forEach(function (f) { if (document.activeElement !== $(f[0])) $(f[0]).value = str(state.account[f[1]]); });
@@ -388,6 +523,7 @@
         return [x.symbol + ' ' + x.side + ' ' + x.volume, '@ ' + x.open_price + '  SL ' + (str(x.stop_loss) || 'none')];
       })));
     }
+    validateSetup();
   }
 
   function renderSymbol() {
@@ -409,6 +545,7 @@
     $('sym-mode').value = sp.calc_mode;
     SPEC_FIELDS.forEach(function (f) { if (document.activeElement !== $(f[0])) $(f[0]).value = str(sp[f[1]]); });
     $('sym-confirmed').checked = !!sp.confirmed;
+    validateSetup();
   }
 
   function renderThumbs() {
@@ -456,25 +593,57 @@
         buttons.push(el('button', { type: 'button', class: 'ghost', id: 'fix-spec', text: 'افتح مواصفات الرمز',
           onclick: function () { goSetupSymbol(str(t.symbol)); } }));
       }
+      if ((r.code === 'NEEDS_SECOND' || r.code === 'SECOND_FAILED') && caps.sample) {
+        buttons.push(el('button', { type: 'button', class: 'ghost', id: 'fix-second', text: 'أجرِ القراءة الثانية الآن',
+          onclick: function () { state.second = null; rerun(true); } }));
+      }
     });
     return buttons.length ? el('div', { class: 'fixes' }, buttons) : null;
   }
 
+  // A ticket made from photos ages: after STALE_MINUTES it must be checked against the price again.
+  function recheck(res, value, message) {
+    if (!isNum(value)) { message.textContent = 'اكتب السعر الحالي كرقم.'; return; }
+    var trade = Object.assign({}, res.trade, { current: price(value) });
+    var again = sizeTrade(trade);
+    if (again.verdict === 'OK' && again.calc.order_type === res.calc.order_type) {
+      state.currentOverride = price(value);
+      state.lastMadeAt = Date.now();
+      toast('التذكرة ما زالت صالحة');
+      rerun(false);
+      return;
+    }
+    var first = reason('STALE_PRICE', [['Failed', 'STALE_PRICE'], ['Price now', price(value)],
+      ['Order type before', str(res.calc.order_type)], ['Order type now', again.calc ? str(again.calc.order_type) || 'none' : 'none']]);
+    renderResult({ verdict: 'NO_TRADE', reasons: [first].concat(again.verdict === 'OK' ? [] : again.reasons), change: [], warnings: [],
+      numbers: again.numbers || [], calc: again.calc, trade: trade, evidence: res.evidence, opinion: res.opinion, coverage: res.coverage },
+      { journaled: true, ai: true });
+  }
+
   function renderResult(res, opts) {
     opts = opts || {};
+    state.lastRender = { res: res, opts: opts };
     var box = $('result');
     clear(box);
     var ok = res.verdict === 'OK', t = res.trade || {}, out = res.calc || {};
-    box.className = 'ticket ' + (ok ? 'ok' : res.verdict === 'INVALID' ? 'bad' : 'no') + (opts.example ? ' example' : '');
+    var ageMin = opts.ai && ok && state.lastMadeAt ? Math.floor((Date.now() - state.lastMadeAt) / 60000) : 0;
+    var stale = opts.ai && ok && ageMin >= STALE_MINUTES;
+    var tone = ok || res.verdict === 'SETUP' ? 'ok' : res.verdict === 'INVALID' ? 'bad' : res.verdict === 'INCOMPLETE' ? 'idle' : 'no';
+    box.className = 'ticket ' + tone + (opts.example ? ' example' : '');
     if (!opts.quiet) { void box.offsetWidth; box.classList.add('fresh'); }
 
-    box.appendChild(el('div', { class: 'stamp', text: STAMP[res.verdict] || STAMP.NO_TRADE }));
+    box.appendChild(el('div', { class: 'stamp', text: stale ? 'تحتاج تحققاً' : STAMP[res.verdict] || STAMP.NO_TRADE }));
     if (opts.example) box.appendChild(el('span', { class: 'tag', text: 'مثال بأرقام البداية' }));
     var typeText = str(out.order_type) || (t.side === 'buy' ? 'Buy' : t.side === 'sell' ? 'Sell' : '');
     box.appendChild(el('header', { class: 'ticket-head' }, [el('div', {}, [
-      el('div', { class: 'sym', dir: 'ltr', text: str(t.symbol) || '?' }),
+      el('div', { class: 'sym', dir: 'ltr', text: str(t.symbol) || (res.verdict === 'SETUP' ? 'SETUP' : '?') }),
       el('div', { class: 'type', dir: 'ltr', text: typeText })
     ])]));
+    if (res.coverage) {
+      box.appendChild(el('div', { class: 'cover', 'aria-label': 'الصور التي وصلت' }, res.coverage.map(function (c) {
+        return el('span', { class: c.ok ? 'yes' : 'missing', text: c.label });
+      })));
+    }
 
     var textFold = null, pre = null;
     if (ok) {
@@ -484,7 +653,21 @@
         dl.appendChild(el('dd', { text: str(l[1]) || '-' }));
       });
       box.appendChild(dl);
+      if (opts.ai) {
+        box.appendChild(el('p', { class: 'age' }, ['عمر التذكرة بالدقائق:', el('b', { dir: 'ltr', id: 'ticket-age', text: String(ageMin) })]));
+      }
+      if (stale) {
+        var input = el('input', { type: 'text', inputmode: 'decimal', dir: 'ltr', id: 'recheck-price', autocomplete: 'off', 'aria-label': 'السعر الحالي' });
+        var message = el('p', { class: 'hint', role: 'alert' });
+        var go = el('button', { type: 'button', class: 'ghost', id: 'btn-recheck', text: 'تحقق' });
+        go.addEventListener('click', function () { recheck(res, input.value, message); });
+        box.appendChild(el('div', { class: 'recheck' }, [
+          el('strong', { text: 'مرّت عشر دقائق. اكتب السعر الحالي من البرنامج قبل استعمال التذكرة.' }),
+          el('div', { class: 'row' }, [input, go]), message
+        ]));
+      }
       var copy = el('button', { type: 'button', class: 'cta', id: 'btn-copy', text: 'انسخ التذكرة' });
+      copy.disabled = stale;
       pre = el('pre', { class: 'code', dir: 'ltr', id: 'ticket-text', text: res.ticketText });
       textFold = fold('نص التذكرة كما يُنسخ', [pre]);
       copy.addEventListener('click', function () { copyText(res.ticketText, copy, pre, textFold); });
@@ -501,7 +684,7 @@
         box.appendChild(el('h3', { text: 'ما الذي يجب أن يتغيّر' }));
         box.appendChild(block(res.change));
       }
-      if (res.verdict !== 'INVALID') box.appendChild(el('p', { class: 'sub', text: 'نتيجة صحيحة. لن تُرفع نسبة المخاطرة لإخراج تذكرة.' }));
+      if (res.verdict === 'NO_TRADE') box.appendChild(el('p', { class: 'sub', text: 'نتيجة صحيحة. لن تُرفع نسبة المخاطرة لإخراج تذكرة.' }));
     }
 
     box.appendChild(el('div', { class: 'perf', 'aria-hidden': 'true' }));
@@ -529,9 +712,9 @@
     if (res.evidence) box.appendChild(fold('ما قُرئ من الصور', [res.evidence]));
     if (res.opinion) box.appendChild(fold('رأي التحليل', [res.opinion]));
 
-    if (!opts.example && !opts.journaled && res.verdict !== 'INVALID') {
+    if (!opts.example && !opts.journaled && (res.verdict === 'OK' || res.verdict === 'NO_TRADE')) {
       var add = el('button', { type: 'button', class: 'ghost', id: 'btn-journal', text: 'أضف إلى السجل' });
-      add.addEventListener('click', function () { addJournal(res); add.disabled = true; add.textContent = 'أُضيفت إلى السجل'; });
+      add.addEventListener('click', function () { addJournal(res); add.disabled = true; add.textContent = 'أُضيفت إلى السجل'; toast('أُضيفت إلى السجل'); });
       box.appendChild(el('div', { class: 'row', style: 'margin-top:10px' }, [add]));
     }
     box.appendChild(el('ul', { class: 'fine' }, [
@@ -540,9 +723,19 @@
     ]));
   }
 
+  function tickAge() {   // keep the age on the ticket current, and flag it once it goes stale
+    var last = state.lastRender;
+    if (!last || !last.opts.ai || last.res.verdict !== 'OK' || !state.lastMadeAt) return;
+    var minutes = Math.floor((Date.now() - state.lastMadeAt) / 60000);
+    var shown = $('ticket-age');
+    if (minutes >= STALE_MINUTES && !$('recheck-price')) renderResult(last.res, Object.assign({}, last.opts, { quiet: true }));
+    else if (shown) shown.textContent = String(minutes);
+  }
+
   function copyText(text, button, pre, holder) {
     function done(ok) {
       button.textContent = ok ? 'تم النسخ' : 'حدد النص وانسخه يدوياً';
+      if (ok) toast('نُسخت التذكرة');
       setTimeout(function () { button.textContent = 'انسخ التذكرة'; }, 2500);
     }
     function fallback() {
@@ -562,6 +755,87 @@
   }
 
   function tile(label, value) { return el('div', { class: 'tile' }, [el('b', { text: value }), el('span', { text: label })]); }
+  function sparkline(values) {   // cumulative profit and loss, one point per closed trade
+    var NS = 'http:' + '//www.w3.org/2000/svg';   // the SVG namespace name, not a network address
+    var w = 300, h = 64, lo = Math.min.apply(null, values.concat(0)), hi = Math.max.apply(null, values.concat(0));
+    var span = hi - lo || 1;
+    function y(v) { return (h - 6 - (v - lo) / span * (h - 12)).toFixed(1); }
+    function x(i) { return (values.length === 1 ? w / 2 : 4 + i * (w - 8) / (values.length - 1)).toFixed(1); }
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    svg.setAttribute('class', 'spark');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'منحنى الربح والخسارة المتراكم');
+    var zero = document.createElementNS(NS, 'line');
+    zero.setAttribute('x1', '0'); zero.setAttribute('x2', String(w)); zero.setAttribute('y1', y(0)); zero.setAttribute('y2', y(0));
+    zero.setAttribute('stroke', '#27444f'); zero.setAttribute('stroke-dasharray', '4 4');
+    var line = document.createElementNS(NS, 'polyline');
+    line.setAttribute('points', values.map(function (v, i) { return x(i) + ',' + y(v); }).join(' '));
+    line.setAttribute('fill', 'none'); line.setAttribute('stroke', '#f2b632'); line.setAttribute('stroke-width', '2.5');
+    line.setAttribute('stroke-linejoin', 'round'); line.setAttribute('stroke-linecap', 'round');
+    var dot = document.createElementNS(NS, 'circle');
+    dot.setAttribute('cx', x(values.length - 1)); dot.setAttribute('cy', y(values[values.length - 1])); dot.setAttribute('r', '4');
+    dot.setAttribute('fill', '#f2b632');
+    svg.appendChild(zero); svg.appendChild(line); svg.appendChild(dot);
+    return svg;
+  }
+
+  var REVIEW_TASK = [
+    'You review one CLOSED practice trade on a MetaTrader 5 DEMO account. Reply with ONLY one JSON object.',
+    'The attached image is a screenshot taken after the trade closed: the chart, or the History tab.',
+    'Compare what the image shows with the plan below. Copy numbers exactly as printed; what you cannot read is "unclear".',
+    'Do not suggest a new trade and do not predict the market. Describe what happened and whether the plan was followed.',
+    'Every field ending in _ar is one or two short, simple Arabic sentences with no Latin letters and no digits.',
+    'JSON SHAPE: {"followed_plan":"yes|no|unclear","exit":"target|stop|manual|unclear","summary_ar":"...","lessons_ar":["...","..."]}',
+    'PLAN:'
+  ].join('\n');
+  var REVIEW_AR = { yes: 'الخطة اتُّبعت', no: 'الخطة لم تُتَّبع', unclear: 'غير واضح من الصورة',
+                    target: 'أُغلقت عند الهدف', stop: 'أُغلقت عند الوقف', manual: 'أُغلقت يدوياً' };
+  function runReview(row, file, status) {
+    if (!caps.sample) { status.textContent = 'المراجعة تعمل عند فتح الصفحة من داخل التطبيق.'; return; }
+    status.textContent = 'جاري قراءة الصورة ومقارنتها بالخطة.';
+    var plan = JSON.stringify({ symbol: row.symbol, type: row.type, entry: row.entry, stop: row.stop, target: row.target,
+                                volume: row.lots, result: row.result, pnl: row.pnl });
+    caps.sample.json(REVIEW_TASK + '\n' + plan, { images: [file], cache: false, modelTier: 'default' }).then(function (d) {
+      if (!d || typeof d !== 'object' || !str(d.summary_ar)) { status.textContent = AR.BAD_REPLY; return; }
+      row.review = { followed_plan: str(d.followed_plan), exit: str(d.exit), summary_ar: str(d.summary_ar),
+                     lessons_ar: (Array.isArray(d.lessons_ar) ? d.lessons_ar : []).map(str).filter(Boolean).slice(0, 3) };
+      saveRow(row);
+      renderJournal();
+      toast('حُفظت المراجعة');
+    }, function (e) {
+      status.textContent = SAMPLE_ERRORS[e && e.code] || 'خطأ مؤقت في الاتصال. حاول مرة أخرى.';
+    });
+  }
+
+  function renderPerformance(rows, closed) {
+    var foldBox = $('fold-perf'), box = $('perf');
+    clear(box);
+    foldBox.hidden = !rows.length;
+    if (!rows.length) return;
+    if (closed.length) {
+      var running = 0, curve = closed.slice().reverse().map(function (r) { var v = parseFloat(r.pnl); running += isFinite(v) ? v : 0; return running; });
+      box.appendChild(el('p', { class: 'note', text: 'الربح والخسارة المتراكم، نقطة لكل صفقة مغلقة.' }));
+      box.appendChild(sparkline(curve));
+      var by = {};
+      closed.forEach(function (r) {
+        var b = by[r.symbol] = by[r.symbol] || { closed: 0, wins: 0, pnl: 0 };
+        b.closed++; if (r.result === 'win') b.wins++;
+        var v = parseFloat(r.pnl); b.pnl += isFinite(v) ? v : 0;
+      });
+      box.appendChild(el('p', { class: 'note', text: 'حسب الرمز: المغلقة، الرابحة، المجموع.' }));
+      box.appendChild(block(Object.keys(by).sort().map(function (k) {
+        return [k, by[k].closed + ' closed, ' + by[k].wins + ' won, ' + by[k].pnl.toFixed(2)];
+      })));
+    }
+    var why = {};
+    rows.forEach(function (r) { if (r.verdict !== 'OK' && str(r.reason)) why[r.reason] = (why[r.reason] || 0) + 1; });
+    var codes = Object.keys(why).sort(function (a, b) { return why[b] - why[a]; });
+    if (codes.length) {
+      box.appendChild(el('p', { class: 'note', text: 'أكثر أسباب عدم خروج تذكرة.' }));
+      box.appendChild(block(codes.map(function (c) { return [c, String(why[c])]; })));
+    }
+  }
 
   function renderJournal() {
     var rows = state.journal.slice().sort(function (a, b) { return Number(b.id) - Number(a.id); });
@@ -580,9 +854,15 @@
     stats.appendChild(tile('نسبة التعادل المطلوبة', avg ? (100 / (1 + avg)).toFixed(1) + '%' : '-'));
     stats.appendChild(tile('الربح والخسارة', closed.length ? pnl.toFixed(2) + ' ' + (str(state.account.currency) || 'USD') : '-'));
     $('stats-note').textContent = closed.length < 30 ? 'أقل من ثلاثين صفقة مغلقة: العينة صغيرة ولا تدل على شيء بعد.' : '';
+    renderPerformance(rows, closed);
 
     var list = $('journal-list');
     clear(list);
+    if (state.loading && !rows.length) {
+      list.appendChild(el('div', { class: 'skel', role: 'status', 'aria-label': 'جاري تحميل السجل' }));
+      list.appendChild(el('div', { class: 'skel', 'aria-hidden': 'true' }));
+      return;
+    }
     if (!rows.length) {
       list.appendChild(el('p', { class: 'empty', text: 'السجل فارغ. كل نتيجة تحليل تُضاف هنا، وبعد إغلاق الصفقة تسجل نتيجتها.' }));
       return;
@@ -596,25 +876,61 @@
         ]),
         el('div', { class: 'jnum', text: [r.entry, r.stop, r.target].map(function (v) { return str(v) || '-'; }).join(' / ') +
           (isOk ? '   vol ' + (str(r.lots) || '-') + '   risk ' + (str(r.risk) || '-') + '   RR ' + (str(r.reward_risk) || '-') : '') }),
-        el('div', { class: 'jnum', text: str(r.time).slice(0, 16).replace('T', ' ') })
+        el('div', { class: 'jnum', text: str(r.time).slice(0, 16).replace('T', ' ') + (str(r.reason) ? '   ' + r.reason : '') })
       ]);
       if (isOk) {
         var seg = el('div', { class: 'seg', role: 'group', 'aria-label': 'نتيجة الصفقة' });
         [['win', 'ربح'], ['loss', 'خسارة'], ['cancelled', 'ملغاة']].forEach(function (o) {
           seg.appendChild(el('button', { type: 'button', 'data-result': o[0], 'aria-pressed': String(r.result === o[0]), text: o[1],
-            onclick: function () { r.result = r.result === o[0] ? '' : o[0]; saveRow(r); renderJournal(); } }));
+            onclick: function () {
+              r.result = r.result === o[0] ? '' : o[0];
+              r.closed_at = r.result ? new Date().toISOString() : '';
+              saveRow(r);
+              renderJournal();
+              rerun(false);   // the daily loss limit may now apply
+            } }));
         });
         var pnlInput = el('input', { type: 'text', inputmode: 'decimal', dir: 'ltr', value: str(r.pnl), id: 'jr-pnl-' + r.id, autocomplete: 'off' });
-        pnlInput.addEventListener('change', function () { r.pnl = price(pnlInput.value); saveRow(r); renderJournal(); });
+        pnlInput.addEventListener('change', function () {
+          var v = price(pnlInput.value);
+          if (v !== '' && !/^-?(\d+\.?\d*|\.\d+)$/.test(v)) { pnlInput.setAttribute('aria-invalid', 'true'); toast('اكتب المبلغ كرقم، والسالب للخسارة'); return; }
+          r.pnl = v; saveRow(r); renderJournal();
+        });
         card.appendChild(seg);
-        card.appendChild(el('label', { class: 'field', for: 'jr-pnl-' + r.id }, ['مبلغ الربح أو الخسارة', pnlInput]));
+        card.appendChild(el('label', { class: 'field', for: 'jr-pnl-' + r.id }, ['مبلغ الربح أو الخسارة (السالب للخسارة)', pnlInput]));
       }
-      card.appendChild(el('button', { type: 'button', class: 'link', style: 'align-self:flex-start', text: 'حذف من السجل',
-        onclick: function () {
-          state.journal = state.journal.filter(function (x) { return x !== r; });
-          deleteRow(r.id);
-          renderJournal();
-        } }));
+      if (r.report) card.appendChild(fold('تقرير التحليل', [evidenceOf(r.report), opinionOf(r.report)]));
+      if (isOk && (r.result === 'win' || r.result === 'loss')) {
+        if (r.review) {
+          card.appendChild(fold('مراجعة الصفقة', [
+            el('p', { text: [REVIEW_AR[r.review.followed_plan], REVIEW_AR[r.review.exit]].filter(Boolean).join('، ') }),
+            el('p', { text: r.review.summary_ar })
+          ].concat(r.review.lessons_ar.map(function (l) { return el('p', { class: 'hint', text: l }); })), true));
+        } else {
+          var status = el('p', { class: 'hint', role: 'status' });
+          card.appendChild(el('button', { type: 'button', class: 'ghost', 'data-review': String(r.id), text: 'راجع الصفقة بصورة بعد الإغلاق',
+            onclick: function () {
+              var picker = $('review-file');
+              picker.onchange = function () { var f = picker.files && picker.files[0]; picker.value = ''; if (f) runReview(r, f, status); };
+              picker.click();
+            } }));
+          card.appendChild(status);
+        }
+      }
+      var del = el('button', { type: 'button', class: 'link', style: 'align-self:flex-start', text: 'حذف من السجل' });
+      del.addEventListener('click', function () {   // two taps: the frame has no confirm dialog
+        if (del.getAttribute('data-armed') !== '1') {
+          del.setAttribute('data-armed', '1');
+          del.textContent = 'اضغط مرة ثانية لتأكيد الحذف';
+          setTimeout(function () { del.removeAttribute('data-armed'); del.textContent = 'حذف من السجل'; }, 3000);
+          return;
+        }
+        state.journal = state.journal.filter(function (x) { return x !== r; });
+        deleteRow(r.id);
+        renderJournal();
+        toast('حُذفت من السجل');
+      });
+      card.appendChild(del);
       list.appendChild(card);
     });
   }
@@ -622,20 +938,47 @@
   function renderAll() { renderStatus(); renderAccount(); renderSymbol(); renderJournal(); renderSkills(); rerun(false); }
 
   // ----------------------------------------------------------- manual mode
+  var MANUAL_FIELDS = { entry: 'man-entry', stop: 'man-stop', target: 'man-target', current_price: 'man-current', 'current-price': 'man-current' };
   function manualTrade() {
     return { symbol: state.symbol, side: state.side, entry: $('man-entry').value, stop: $('man-stop').value,
              target: $('man-target').value, current: $('man-current').value };
   }
+  // Point at the field a calculator error is about, instead of leaving the person to guess.
+  function markManual(res) {
+    var bad = {}, notes = [];
+    ['man-entry', 'man-stop', 'man-target', 'man-current'].forEach(function (id) {
+      if (str($(id).value) !== '' && !isNum($(id).value)) { bad[id] = true; }
+    });
+    if (Object.keys(bad).length) notes.push('الخانة المعلّمة بالأحمر ليست رقماً.');
+    if (res.verdict === 'INVALID' && res.calc) {
+      (res.calc.errors || []).forEach(function (e) {
+        var m = /--([a-z-]+)/.exec(e.message) || /not a number: (\w+)/.exec(e.message);
+        if (e.code === 'STOP_WRONG_SIDE') bad['man-stop'] = true;
+        else if (e.code === 'TARGET_WRONG_SIDE') bad['man-target'] = true;
+        else if (m && MANUAL_FIELDS[m[1]]) bad[MANUAL_FIELDS[m[1]]] = true;
+        if (AR[e.code] && notes.indexOf(AR[e.code]) < 0) notes.push(AR[e.code]);
+      });
+    }
+    ['man-entry', 'man-stop', 'man-target', 'man-current'].forEach(function (id) { $(id).setAttribute('aria-invalid', String(!!bad[id])); });
+    $('man-errors').textContent = notes.join(' ');
+    $('man-errors').hidden = !notes.length;
+  }
   function runManual(quiet) {
     state.lastSource = 'manual';
-    renderResult(sizeTrade(manualTrade()), { example: !state.manualUsed, quiet: !!quiet });
+    var t = manualTrade(), res;
+    if (['entry', 'stop', 'target', 'current'].some(function (k) { return str(t[k]) === ''; })) {
+      res = { verdict: 'INCOMPLETE', reasons: [{ code: 'INCOMPLETE', ar: AR.INCOMPLETE, lines: [] }], change: [], warnings: [], numbers: [], calc: null, trade: t };
+    } else {
+      res = sizeTrade(t);
+    }
+    markManual(res);
+    renderResult(res, { example: !state.manualUsed, quiet: !!quiet });
   }
-  // Recompute what is on the ticket after an account, specification or one-tap fix.
+  // Recompute what is on the ticket after an account change, a specification change or a one-tap fix.
   function rerun(fromFix) {
     if (state.lastSource === 'ai' && state.lastData) {
-      var res = buildResult(state.lastData);
-      var id = fromFix ? addJournal(res) : null;
-      renderResult(res, { journaled: true, journalId: id, quiet: !fromFix });
+      if (fromFix) { settle(true); return; }
+      renderResult(buildResult(state.lastData), { journaled: true, ai: true, quiet: true });
     } else {
       runManual(!fromFix);
     }
@@ -660,6 +1003,9 @@
     '- Do not compute lots, money risk, margin or reward:risk. Gate 6 is applied by the page.',
     '- Judge gates 1 to 5 yourself. At the first gate that fails set decision "no_trade", failed_gate to its number and explain in reason_ar. Do not adjust levels or estimates after a gate fails.',
     '- Build ONE setup for ONE symbol: the symbol with the most timeframes.',
+    '- Follow "Candidate entries" in the trade skill: put up to three candidates in setup.candidates, nearest to the current price first, each with its entry and its own target. One stop for all of them.',
+    '- The page re-checks your setup against your own "charts" data, exactly as "Check the setup against the analysis" says: the side against the base scenario directions, the estimates, every entry and target against the listed supports and resistances, and the stop strictly beyond the base invalidation. A mismatch is reported as a failed gate.',
+    '- Copy every order line or open position drawn on a chart into order_lines of that image.',
     '- Reply with ONLY one JSON object in the shape below. This JSON replaces the Arabic answer templates of the skill: the page renders those itself.',
     '',
     'JSON RULES',
@@ -674,7 +1020,7 @@
     '"account":null,',
     '"specification":null,',
     '"charts":[{"symbol":"EURUSD","timeframe":"H4","weaker_evidence":true,"trend":"up|down|sideways","strength":"strong|moderate|weak","trend_ar":"...","supports":[{"price":"1.0990","why_ar":"..."}],"resistances":[{"price":"1.1100","why_ar":"..."}],"moving_averages_ar":"...","volume_ar":"...","patterns_ar":["..."],"assessment_ar":"...","scenarios":[{"name_ar":"...","direction":"up|down|sideways","estimate_pct":55,"targets":["1.0990"],"invalidation":"1.1108"}]}],',
-    '"setup":{"symbol":"EURUSD","highest_timeframe":"H4","decision":"candidate|no_trade","failed_gate":null,"reason_ar":"...","side":"buy|sell","entry":"1.1098","stop":"1.1108","target":"1.1078","base_estimate_pct":55,"warnings_ar":[]},',
+    '"setup":{"symbol":"EURUSD","highest_timeframe":"H4","decision":"candidate|no_trade","failed_gate":null,"reason_ar":"...","side":"buy|sell","stop":"1.1108","candidates":[{"entry":"1.1098","target":"1.1078","why_ar":"..."}],"base_estimate_pct":55,"warnings_ar":[]},',
     '"opinion_ar":"..."}',
     'When a Trade tab is present, "account" is {"balance":"102.00","equity":"101.96","margin":"75.23","free_margin":"26.73","positions":[{"symbol":"F","side":"buy","volume":"2","open_price":"11.93","stop_loss":null,"take_profit":null}]}.',
     'When a Specification screen is present, "specification" is {"symbol":"EURUSD","contract_size":"100000","digits":"5","min_lot":"0.01","lot_step":"0.01","stops_level":"0","calculation":"Forex|CFD Leverage|CFD|Exchange Stocks|other","profit_currency":"USD"}.'
@@ -789,45 +1135,153 @@
     return notes;
   }
 
+  function coverageOf(data) {
+    var seen = {};
+    (data.images || []).forEach(function (im) { if (im.kind === 'chart') seen[str(im.timeframe).toUpperCase()] = true; });
+    var tab = !!data.account || (data.images || []).some(function (im) { return im.kind === 'trade_tab'; });
+    return [{ label: 'أسبوعي', ok: !!seen.W1 }, { label: 'أربع ساعات', ok: !!seen.H4 }, { label: 'ساعة', ok: !!seen.H1 }, { label: 'تبويب التداول', ok: tab }];
+  }
+  function tfRank(tf) { var i = TF_ORDER.indexOf(str(tf).toUpperCase()); return i < 0 ? 999 : i; }
+  function inLevels(value, levels) { return levels.some(function (l) { return l.eq(value); }); }
+
+  // The page does not take the model's word for gates 1, 2 and 4: it re-checks the setup
+  // against the model's own analysis ("Check the setup against the analysis" in the trade skill).
+  function verifyGates(data) {
+    var setup = data.setup || {}, sym = str(setup.symbol), side = str(setup.side).toLowerCase();
+    function fail(gate, lines) { return { ok: false, gate: gate, lines: lines }; }
+    var charts = (data.charts || []).filter(function (c) {
+      return str(c.symbol) === sym && Array.isArray(c.scenarios) && c.scenarios.length;
+    }).sort(function (a, b) { return tfRank(a.timeframe) - tfRank(b.timeframe); });   // highest timeframe first
+    if (!charts.length) return fail(1, [['Check', 'no analysed chart for the symbol']]);
+    var top = charts[0], base = top.scenarios[0], dir = str(base.direction).toLowerCase();
+    var want = dir === 'up' ? 'buy' : dir === 'down' ? 'sell' : '';
+    if (!want || want !== side) return fail(1, [['Highest timeframe', str(top.timeframe)], ['Base direction', dir || 'missing'], ['Side', side || 'missing']]);
+    for (var i = 1; i < charts.length; i++) {
+      var low = str(charts[i].scenarios[0].direction).toLowerCase();
+      if ((want === 'buy' && low === 'down') || (want === 'sell' && low === 'up')) {
+        return fail(1, [['Lower timeframe', str(charts[i].timeframe)], ['Its base direction', low]]);
+      }
+    }
+    var est = Number(base.estimate_pct), sum = 0, biggest = est;
+    top.scenarios.forEach(function (s) { var n = Number(s.estimate_pct); sum += n; if (n > biggest) biggest = n; });
+    if (!(est >= 50)) return fail(2, [['Base estimate', String(base.estimate_pct) + '%']]);
+    if (!(Math.abs(sum - 100) <= 1)) return fail(2, [['Estimates sum', String(sum)]]);
+    if (biggest > est) return fail(2, [['Check', 'the first scenario is not the largest']]);
+    var inv = dec(base.invalidation), stop = dec(setup.stop);
+    if (!inv || !stop) return fail(4, [['Stop', price(setup.stop) || 'missing'], ['Invalidation', price(base.invalidation) || 'missing']]);
+    if (side === 'sell' ? !stop.gt(inv) : !stop.lt(inv)) return fail(4, [['Stop', price(setup.stop)], ['Invalidation', price(base.invalidation)]]);
+    var levels = [], targets = [];
+    charts.forEach(function (c) {
+      (c.supports || []).concat(c.resistances || []).forEach(function (l) { var d = dec(l && l.price); if (d) levels.push(d); });
+    });
+    (base.targets || []).forEach(function (t) { var d = dec(t); if (d) targets.push(d); });
+    return { ok: true, side: side, levels: levels, targets: targets };
+  }
+
+  function gateResult(gate, note, lines, trade) {
+    var g = reason('GATE_' + gate, [['Failed', 'GATE ' + (gate || 'unknown')]].concat(lines || []));
+    if (!AR['GATE_' + gate]) g.ar = 'إحدى البوابات لم تنجح.';
+    g.note = note || '';
+    return { verdict: 'NO_TRADE', reasons: [g], change: [], warnings: [], numbers: [], calc: null, trade: trade || {} };
+  }
+
+  // Size the candidate entries in the order the analysis listed them; the first that passes is the ticket.
+  function pickCandidate(data, v, images) {
+    var setup = data.setup, sym = str(setup.symbol), side = v.side;
+    var mine = images.filter(function (im) { return str(im.symbol) === sym; });
+    mine.sort(function (a, b) { return tfRank(b.timeframe) - tfRank(a.timeframe); });   // lowest timeframe first: freshest price
+    var first = side === 'sell' ? 'bid' : 'ask', second = side === 'sell' ? 'ask' : 'bid';
+    var current = state.currentOverride || '', oneSided = false;
+    mine.forEach(function (im) { if (!current && str(im[first])) current = price(im[first]); });
+    if (!current) mine.forEach(function (im) { if (!current && str(im[second])) { current = price(im[second]); oneSided = true; } });
+
+    var list = Array.isArray(setup.candidates) && setup.candidates.length ? setup.candidates.slice(0, 3)
+      : [{ entry: setup.entry, target: setup.target }];
+    var firstResult = null, chosen = null, chosenIndex = -1, tried = 0;
+    list.forEach(function (c, i) {
+      if (chosen) return;
+      tried++;
+      var trade = { symbol: sym, side: side, entry: price(c && c.entry), stop: price(setup.stop), target: price(c && c.target),
+                    current: current, estimate: str(setup.base_estimate_pct) };
+      var e = dec(trade.entry), tg = dec(trade.target), r;
+      if (!current) r = gateResult(3, 'السعر الحالي غير مقروء من الصور.', [['Current price', 'missing']], trade);
+      else if (!e || !inLevels(e, v.levels)) r = gateResult(3, 'سعر الدخول ليس من المستويات التي سمّاها التحليل.', [['Entry', trade.entry || 'missing']], trade);
+      else if (!tg || !inLevels(tg, v.levels.concat(v.targets))) r = gateResult(5, 'الهدف ليس من المستويات التي سمّاها التحليل.', [['Target', trade.target || 'missing']], trade);
+      else r = sizeTrade(trade);
+      if (!firstResult) firstResult = r;
+      if (r.verdict === 'OK') { chosen = r; chosenIndex = i; }
+    });
+    var res = chosen || firstResult;
+    if (chosen && chosenIndex > 0) res.warnings.push({ ar: WARN.CANDIDATE_SKIPPED });
+    if (!chosen && tried > 1 && res.reasons[0]) res.reasons[0].lines.push(['Candidates tried', String(tried)]);
+    if (oneSided && !state.currentOverride) res.warnings.push({ ar: WARN.ONE_SIDED_PRICE });
+    return res;
+  }
+
+  function demote(res, code, lines) {   // a sized ticket that a guard holds back
+    res.verdict = 'NO_TRADE';
+    res.ticketText = null;
+    res.reasons = [reason(code, [['Failed', code]].concat(lines || []))];
+    return res;
+  }
+
   function buildResult(data) {
     var evidence = evidenceOf(data);
     if (state.lastNotes) evidence.appendChild(state.lastNotes.cloneNode(true));
-    var setup = data.setup || {};
+    var setup = data.setup || {}, sym = str(setup.symbol);
+    var images = (data.images || []).filter(function (im) { return im.kind === 'chart' && str(im.symbol) && str(im.timeframe); });
+    var baseTrade = { symbol: sym, side: str(setup.side).toLowerCase(), stop: price(setup.stop), estimate: str(setup.base_estimate_pct) };
     var res;
-    var charts = (data.images || []).filter(function (im) { return im.kind === 'chart' && str(im.symbol) && str(im.timeframe); });
-    if (!charts.length) {
-      res = { verdict: 'NO_TRADE', reasons: [reason('NO_CHART')], change: [], warnings: [], numbers: [], calc: null, trade: { symbol: str(setup.symbol) } };
+    if (!images.length) {
+      res = (data.account || data.specification)
+        ? { verdict: 'SETUP', reasons: [{ code: 'SETUP', ar: 'تم تحديث الإعدادات من الصور. أضف صور الشارت لإخراج تذكرة.', lines: [] }],
+            change: [], warnings: [], numbers: [], calc: null, trade: {} }
+        : { verdict: 'NO_TRADE', reasons: [reason('NO_CHART')], change: [], warnings: [], numbers: [], calc: null, trade: { symbol: sym } };
     } else if (setup.decision !== 'candidate') {
-      var gate = reason('GATE_' + str(setup.failed_gate), [['Failed', 'GATE ' + (str(setup.failed_gate) || 'unknown')]]);
-      if (!AR['GATE_' + str(setup.failed_gate)]) gate.ar = 'إحدى البوابات لم تنجح.';
-      gate.note = str(setup.reason_ar);
-      res = { verdict: 'NO_TRADE', reasons: [gate], change: [], warnings: [], numbers: [], calc: null,
-              trade: { symbol: str(setup.symbol), side: str(setup.side).toLowerCase(), entry: price(setup.entry), stop: price(setup.stop),
-                       target: price(setup.target), estimate: str(setup.base_estimate_pct) } };
+      res = gateResult(str(setup.failed_gate), str(setup.reason_ar), [], baseTrade);
     } else {
-      var sym = str(setup.symbol), side = str(setup.side).toLowerCase();
-      var mine = charts.filter(function (im) { return str(im.symbol) === sym; });
-      mine.sort(function (a, b) { return TF_ORDER.indexOf(str(b.timeframe)) - TF_ORDER.indexOf(str(a.timeframe)); });   // lowest timeframe first: freshest price
-      var first = side === 'sell' ? 'bid' : 'ask', second = side === 'sell' ? 'ask' : 'bid';
-      var current = '', oneSided = false;
-      mine.forEach(function (im) { if (!current && str(im[first])) current = price(im[first]); });
-      if (!current) mine.forEach(function (im) { if (!current && str(im[second])) { current = price(im[second]); oneSided = true; } });
-      res = sizeTrade({ symbol: sym, side: side, entry: price(setup.entry), stop: price(setup.stop),
-                        target: price(setup.target), current: current, estimate: str(setup.base_estimate_pct) });
-      if (oneSided) res.warnings.push({ ar: WARN.ONE_SIDED_PRICE });
+      var v = verifyGates(data);
+      res = v.ok ? pickCandidate(data, v, images) : gateResult(v.gate, 'فحص آلي لما كتبه التحليل نفسه.', v.lines, baseTrade);
     }
-    var hasWeekly = charts.some(function (im) { return str(im.timeframe).toUpperCase() === 'W1'; });
-    if (charts.length && !hasWeekly) res.warnings.push({ ar: WARN.NOT_WEEKLY });
-    (setup.warnings_ar || []).forEach(function (w) { if (str(w)) res.warnings.push({ ar: str(w) }); });
+    if (images.length) {
+      var lines = [];
+      images.forEach(function (im) { if (str(im.symbol) === sym) (im.order_lines || []).forEach(function (l) { if (str(l)) lines.push(str(l)); }); });
+      if (lines.length) res.warnings.unshift({ ar: WARN.ORDER_LINES, code: lines.join('\n') });
+      if (!images.some(function (im) { return str(im.timeframe).toUpperCase() === 'W1'; })) res.warnings.push({ ar: WARN.NOT_WEEKLY });
+      (setup.warnings_ar || []).forEach(function (w) { if (str(w)) res.warnings.push({ ar: str(w) }); });
+      res.coverage = coverageOf(data);
+    }
+    if (res.verdict === 'OK') {   // a ticket needs an independent second reading that agrees
+      var second = state.second;
+      if (!second) demote(res, 'NEEDS_SECOND');
+      else if (second.status === 'disagree') demote(res, 'SECOND_OPINION', second.lines);
+      else if (second.status !== 'agree') demote(res, 'SECOND_FAILED', [['Code', str(second.code) || 'unknown']]);
+      else if (second.lines) res.warnings.push({ ar: WARN.SECOND_LEVELS, code: second.lines.map(function (l) { return l[0] + ': ' + l[1]; }).join('\n') });
+    }
     res.evidence = evidence;
     res.opinion = opinionOf(data);
     return res;
   }
 
+  function compareReadings(a, b) {
+    var sa = a.setup || {}, sb = (b && b.setup) || {};
+    var sideA = str(sa.side).toLowerCase(), sideB = str(sb.side).toLowerCase();
+    var vb = b && Array.isArray(b.images) && sb.decision === 'candidate' ? verifyGates(b) : { ok: false, gate: str(sb.failed_gate) };
+    if (sb.decision === 'candidate' && vb.ok && str(sb.symbol) === str(sa.symbol) && sideA === sideB) {
+      var ea = price(((sa.candidates || [])[0] || sa).entry), eb = price(((sb.candidates || [])[0] || sb).entry);
+      var differs = ea !== eb || price(sa.stop) !== price(sb.stop);
+      return { status: 'agree', lines: differs ? [['Second reading entry', eb || 'missing'], ['Second reading stop', price(sb.stop) || 'missing']] : null };
+    }
+    var told = sb.decision !== 'candidate' ? 'no trade, gate ' + (str(sb.failed_gate) || 'unknown')
+      : !vb.ok ? 'failed gate ' + vb.gate : sideB + ' ' + str(sb.symbol);
+    return { status: 'disagree', lines: [['First reading', sideA + ' ' + str(sa.symbol)], ['Second reading', told]] };
+  }
+
   var clockTimer = null;
-  function setBusy(on, text) {
+  function setBusy(on, text, step) {
     state.busy = on;
     $('ai-progress').textContent = text || '';
+    $('ai-step').textContent = step || '';
     clearInterval(clockTimer);
     if (on) {
       var started = Date.now();
@@ -836,42 +1290,68 @@
     }
     renderStatus();
   }
-  function aiNote(text) {
+  function aiNote(text, retry) {
     $('ai-note').textContent = text || '';
     $('ai-note').hidden = !text;
+    $('btn-retry').hidden = !(text && retry);
   }
+
+  function secondReading() {   // resolves once state.second holds the outcome
+    state.abort = new AbortController();
+    setBusy(true, 'قراءة ثانية مستقلة للصور للتأكد قبل إصدار التذكرة.', 'الخطوة الثانية من اثنتين');
+    return caps.sample.json(buildPrompt(), { images: state.lastFiles.slice(), signal: state.abort.signal, cache: false, modelTier: 'default' })
+      .then(function (d2) { state.second = compareReadings(state.lastData, d2); },
+            function (e) { state.second = { status: 'failed', code: e && e.code }; })
+      .then(function () { setBusy(false, ''); });
+  }
+
+  // Show the result for the last analysis, running the second reading first when a ticket depends on it.
+  function settle(journal) {
+    var res = buildResult(state.lastData);
+    var needs = res.reasons.some(function (r) { return r.code === 'NEEDS_SECOND'; }) && !!caps.sample && state.lastFiles.length > 0;
+    function show() {
+      var final = needs ? buildResult(state.lastData) : res;
+      var id = journal && final.verdict !== 'SETUP' ? addJournal(final, state.lastData) : null;
+      if (final.verdict === 'OK') state.lastMadeAt = Date.now();
+      renderResult(final, { journaled: true, journalId: id, ai: true });
+      try { $('result').scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* older views */ }
+    }
+    if (needs) return secondReading().then(show);
+    show();
+    return Promise.resolve();
+  }
+
   function runAnalysis() {
     if (!caps.sample || state.busy || !state.files.length || !SKILLS.files.length) return;
     state.abort = new AbortController();
     aiNote('');
-    setBusy(true, 'أقرأ الصور وأحلل بملفات المهارات. قد يأخذ دقيقة أو أكثر.');
-    caps.sample.json(buildPrompt(), { images: state.files.slice(), signal: state.abort.signal, cache: false,
-      onText: function () { $('ai-progress').textContent = 'وصل الرد. أحسب التذكرة.'; } })
+    var files = state.files.slice();
+    setBusy(true, 'أقرأ الصور وأحلل بملفات المهارات. قد يأخذ دقيقة أو أكثر.', 'الخطوة الأولى من اثنتين');
+    caps.sample.json(buildPrompt(), { images: files, signal: state.abort.signal, cache: false, modelTier: 'complex',
+      onText: function () { $('ai-progress').textContent = 'وصل الرد. أفحص البوابات وأحسب.'; } })
       .then(function (data) {
         setBusy(false, '');
         state.manualUsed = true;
         if (!data || typeof data !== 'object' || !Array.isArray(data.images)) {
-          aiNote(AR.BAD_REPLY);
-          return;
+          aiNote(AR.BAD_REPLY, true);
+          return null;
         }
+        state.second = null;
+        state.currentOverride = '';
+        state.lastFiles = files;
         state.lastNotes = applyReads(data);
         state.lastData = data;
         state.lastSource = 'ai';
         renderAccount();
         renderSymbol();
-        var res = buildResult(data);
-        var id = addJournal(res);
-        renderResult(res, { journaled: true, journalId: id });
-        try { $('result').scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { /* older views */ }
+        return settle(true);
       }, function (e) {
         setBusy(false, '');
         var code = e && e.code;
-        if (code === 'cancelled') { aiNote('تم الإيقاف.'); return; }
-        aiNote(SAMPLE_ERRORS[code] || 'خطأ مؤقت في الاتصال. حاول مرة أخرى.');
-        if (['not_granted', 'sampling_disabled', 'not_declared', 'capability_disabled', 'capability_removed'].indexOf(code) >= 0) {
-          caps.sample = null;
-          renderStatus();
-        }
+        if (code === 'cancelled') { aiNote('تم الإيقاف. لم يُحسب شيء.', true); return; }
+        var gone = ['not_granted', 'sampling_disabled', 'not_declared', 'capability_disabled', 'capability_removed'].indexOf(code) >= 0;
+        aiNote(SAMPLE_ERRORS[code] || 'خطأ مؤقت في الاتصال. حاول مرة أخرى.', !gone);
+        if (gone) { caps.sample = null; renderStatus(); }
       });
   }
 
@@ -895,11 +1375,16 @@
   }
   function addFiles(list) {
     var max = (caps.images && caps.images.maxCount) || 4;
-    var picked = Array.prototype.slice.call(list || []).filter(function (f) { return /^image\//.test(f.type || ''); });
-    var before = state.files.length + picked.length;
-    state.files = state.files.concat(picked).slice(0, max);
-    aiNote(before > max ? 'الحد الأقصى للصور في المرة الواحدة:' : '');
-    if (before > max) $('ai-note').appendChild(el('pre', { class: 'code inline', dir: 'ltr', text: String(max) }));
+    var maxBytes = (caps.images && caps.images.maxInputBytes) || 20 * 1024 * 1024;
+    var all = Array.prototype.slice.call(list || []);
+    var images = all.filter(function (f) { return /^image\//.test(f.type || ''); });
+    var fits = images.filter(function (f) { return !(f.size > maxBytes); });
+    var total = state.files.length + fits.length;
+    state.files = state.files.concat(fits).slice(0, max);
+    var note = all.length > images.length ? 'بعض الملفات ليست صوراً فتُركت.'
+      : images.length > fits.length ? 'صورة أكبر من الحجم المسموح فتُركت.'
+      : total > max ? 'عدد الصور أكثر من المسموح في المرة الواحدة، فأُخذت الأولى فقط.' : '';
+    aiNote(note, false);
     renderThumbs();
     renderStatus();
   }
@@ -915,6 +1400,19 @@
     ['man-entry', 'man-stop', 'man-target', 'man-current'].forEach(function (id) {
       $(id).addEventListener('input', function () { state.manualUsed = true; runManual(true); });
     });
+    $('intro-close').addEventListener('click', function () {
+      state.introClosed = true;
+      try { localStorage.setItem(LS_KEY + '.intro', '1'); } catch (e) { /* only a convenience */ }
+      renderStatus();
+    });
+    $('news-lock').addEventListener('click', function () {
+      var on = newsLockLeft() > 0;
+      state.account.news_lock_until = on ? null : new Date(Date.now() + NEWS_LOCK_MINUTES * 60000).toISOString();
+      saveSoon('account');
+      renderNews();
+      toast(on ? 'أُلغي قفل الأخبار' : 'قفل الأخبار مفعّل لساعتين');
+      rerun(false);
+    });
 
     $('files').addEventListener('change', function () { addFiles($('files').files); $('files').value = ''; });
     var drop = $('drop');
@@ -925,35 +1423,75 @@
       drop.classList.remove('over');
       if (ev.dataTransfer) addFiles(ev.dataTransfer.files);
     });
+    document.addEventListener('paste', function (ev) {   // a screenshot pasted anywhere on the desk
+      var files = ev.clipboardData && ev.clipboardData.files;
+      if (!files || !files.length || state.view !== 'desk') return;
+      ev.preventDefault();
+      setTab('ai', true);
+      addFiles(files);
+    });
     $('btn-run').addEventListener('click', runAnalysis);
+    $('btn-retry').addEventListener('click', runAnalysis);
     $('btn-stop').addEventListener('click', function () { if (state.abort) state.abort.abort(); });
 
     ACCOUNT_FIELDS.forEach(function (f) {
       $(f[0]).addEventListener('input', function () { state.account[f[1]] = price($(f[0]).value); saveSoon('account'); renderAccount(); rerun(false); });
     });
-    $('btn-nopos').addEventListener('click', function () { state.account.open_positions = []; saveSoon('account'); renderAccount(); rerun(false); });
+    $('btn-nopos').addEventListener('click', function () { state.account.open_positions = []; saveSoon('account'); renderAccount(); rerun(false); toast('سُجّل: لا توجد صفقات مفتوحة'); });
     $('btn-unknownpos').addEventListener('click', function () { state.account.open_positions = null; saveSoon('account'); renderAccount(); rerun(false); });
     $('sym-select').addEventListener('change', function () { state.symbol = $('sym-select').value; renderSymbol(); rerun(false); });
     $('sym-mode').addEventListener('change', function () { state.symbols[state.symbol].calc_mode = $('sym-mode').value; saveSoon('symbols'); rerun(false); });
     SPEC_FIELDS.forEach(function (f) {
-      $(f[0]).addEventListener('input', function () { state.symbols[state.symbol][f[1]] = price($(f[0]).value); saveSoon('symbols'); rerun(false); });
+      $(f[0]).addEventListener('input', function () { state.symbols[state.symbol][f[1]] = price($(f[0]).value); saveSoon('symbols'); validateSetup(); rerun(false); });
     });
     $('sym-confirmed').addEventListener('change', function () { state.symbols[state.symbol].confirmed = $('sym-confirmed').checked; saveSoon('symbols'); rerun(false); });
     $('form-addsym').addEventListener('submit', function (ev) {
       ev.preventDefault();
       var name = str($('sym-new').value).toUpperCase().replace(/[^A-Z0-9._#-]/g, '');
-      if (!name || state.symbols[name]) return;
+      if (!name) { toast('اكتب اسم الرمز أولاً'); return; }
+      if (state.symbols[name]) { toast('الرمز موجود من قبل'); state.symbol = name; renderSymbol(); return; }
       state.symbols[name] = spec('forex', '100000', 5, '0.01', '0.01');
       state.symbol = name;
       $('sym-new').value = '';
       saveSoon('symbols');
       renderSymbol();
       rerun(false);
+      toast('أُضيف الرمز. راجع مواصفاته');
+    });
+
+    $('btn-export').addEventListener('click', function () {
+      var text = toCsv(), out = $('csv-out');
+      out.value = text;
+      function shown() { out.hidden = false; try { out.focus(); out.select(); } catch (e) { /* manual selection */ } }
+      try {
+        navigator.clipboard.writeText(text).then(function () { toast('نُسخ السجل'); }, function () { shown(); toast('حدد النص وانسخه يدوياً'); });
+      } catch (e) { shown(); toast('حدد النص وانسخه يدوياً'); }
+    });
+    $('btn-import').addEventListener('click', function () {
+      var note = $('csv-note');
+      try {
+        var done = importCsv($('csv-in').value);
+        $('csv-in').value = '';
+        note.className = 'note';
+        note.textContent = 'تم الاستيراد. الجديد والمحدّث:';
+        note.appendChild(el('pre', { class: 'code inline', dir: 'ltr', text: done.added + ' new, ' + done.updated + ' updated' }));
+        renderJournal();
+        rerun(false);
+      } catch (e) {
+        note.className = 'note warn';
+        note.textContent = typeof e === 'string' ? e : 'تعذر قراءة النص.';
+      }
     });
   }
   function initCaps() {
     var api = window.claude;
-    if (!api || typeof api.use !== 'function') { caps.sampleKnown = caps.dbKnown = true; renderStatus(); return; }
+    if (!api || typeof api.use !== 'function') {
+      caps.sampleKnown = caps.dbKnown = true;
+      state.loading = false;
+      renderStatus();
+      renderJournal();
+      return;
+    }
     api.use('sample').then(function (s) {
       caps.sample = s || null;
       if (!s || typeof s.limits !== 'function') return null;
@@ -966,8 +1504,9 @@
     });
     api.use('db').then(function (db) { caps.db = db || null; }).catch(function () { caps.db = null; }).then(function () {
       caps.dbKnown = true;
-      renderStatus();
       if (caps.db) loadFromDb();
+      else { state.loading = false; renderJournal(); }
+      renderStatus();
     });
   }
 
@@ -976,8 +1515,10 @@
     return;
   }
   loadLocal();
+  try { state.introClosed = localStorage.getItem(LS_KEY + '.intro') === '1'; } catch (e) { /* only a convenience */ }
   wire();
   renderAll();
   runManual(false);
   initCaps();
+  setInterval(function () { tickAge(); renderNews(); }, 20000);
 })();

@@ -47,8 +47,9 @@ Supporting skills used by `/trade`:
 
 ## Files
 
-- `data/account.json` - balance, free margin, leverage, risk limits, open positions.
-  Starting values until `/account` replaces them.
+- `data/account.json` - balance, free margin, leverage, risk limits (including
+  `max_daily_losses` and `news_lock_until`), open positions. Starting values until
+  `/account` replaces them.
 - `data/symbols.json` - symbol specifications. A symbol is `"confirmed": true` only after
   a Specification screenshot. Say so whenever an unconfirmed specification is used.
 - `inbox/` - screenshots dropped here are read by `/trade` (ignored by git).
@@ -75,6 +76,10 @@ It never places an order, never asks for a password and loads nothing from the n
   other service. The model does steps 1 to 4 of `/trade` (read, analyse, gates 1 to 5);
   the page's own code does step 5 (sizing, share count, open risk, gate 6) and step 6
   (journal and answer).
+- **Same guards.** The page applies in code what the trade skill states in words: the
+  candidate entries in order, the check of the setup against the analysis, the news lock,
+  the daily loss limit, the second reading, the order-line warning and the fresh-price
+  check. Change the rule in `.claude/skills/trade/SKILL.md` and in `ui/app.js` together.
 - **Same arithmetic.** `ui/calc.js` is a port of `calc.py`. `tests/test_ui.py` compares
   the two field by field (it needs `node` and is skipped without it) and fails when
   `ui/index.html` is stale.

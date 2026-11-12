@@ -95,10 +95,58 @@ symbol is no trade.** Do not adjust levels or estimates after seeing a gate fail
 
 Gates 1-5 are judged from the analysis; gate 6 is checked with the script in step 5.
 
+### Candidate entries
+
+Gate 3 can be met by more than one level. List up to **three** candidate entries, nearest
+to the current price first. The stop is the same for all of them (gate 4). Each candidate
+has its own target: the next support or resistance level beyond that entry in the trade
+direction (gate 5).
+
+Fix this list **before** sizing. In step 5 size the candidates in order: the first one
+that passes every check is the ticket. If none passes, the answer is no trade and the
+reason shown is the first candidate's. Never add or move a level after seeing a sizing
+result, and never change the stop to make a candidate pass.
+
+### Check the setup against the analysis
+
+Before sizing, check the setup against what the analysis itself says. Any mismatch is a
+failed gate, not something to patch:
+
+- The side matches the direction of the highest timeframe's base scenario, and no lower
+  timeframe's base scenario points the other way (gate 1).
+- The base scenario has the largest estimate of its chart, the estimates of that chart
+  sum to 100, and the base estimate is 50 or more (gate 2).
+- Every candidate entry and every target is a price listed as a support or resistance
+  in the analysis of that symbol (gates 3 and 5).
+- The stop is strictly beyond the base scenario's invalidation level (gate 4).
+
+### Guards
+
+A ticket is given only when all of these hold. They never turn a no trade into a ticket.
+
+- **News lock.** If `news_lock_until` in `data/account.json` is a time in the future: no
+  trade. The user sets it when an important release is near; there is no news feed.
+- **Daily loss limit.** Count today's rows in `journal.csv` whose `result` is `loss`. If
+  the count is `max_daily_losses` in `data/account.json` or more: no trade for the rest of
+  the day.
+- **Second reading.** Before giving a ticket, read the charts a second time from scratch,
+  without looking at the first analysis. If the second reading finds no setup, or its
+  side differs from the first: no trade. If it agrees on the side but names other levels,
+  keep the first reading's levels and say so in the warnings.
+- **Order lines.** If a chart shows an order line or an open position for the ticket's
+  symbol, list those lines in the warnings: an old pending order may conflict with the
+  ticket.
+- **Fresh price.** A ticket older than ten minutes is checked again against the current
+  price before it is used. If the order type would change (the price has crossed the
+  entry, the stop or the target), the ticket is no longer valid.
+
 ## Step 5 - Size it (scripts only)
 
 Take every number from `data/account.json`, `data/symbols.json` and the setup. Show each
 command you run. Do not do this arithmetic in your head.
+
+With several candidate entries, size them in the order listed and stop at the first one
+that passes (see "Candidate entries").
 
 **If the symbol is missing from `data/symbols.json`, or its `calc_mode` is not one of
 `forex`, `cfd_leverage`, `cfd`, `stocks`:** no trade. Ask for a Specification screenshot.

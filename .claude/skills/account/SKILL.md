@@ -13,8 +13,9 @@ Keep the two data files in step with what MT5 shows. Nothing else is touched.
 1. No external APIs or services. Inputs are only the user's screenshots and typed numbers.
 2. Never place, modify or close an order. **Never ask for, read out or store a password,
    login, account number or server name**, even if one is visible in a screenshot.
-3. Never loosen a risk rule. `risk_pct`, `max_open_risk_pct` and `max_position_pct` change
-   only when the user types the new value in this message. Never suggest raising them.
+3. Never loosen a risk rule. `risk_pct`, `max_open_risk_pct`, `max_position_pct`,
+   `max_daily_losses` and `news_lock_until` change only when the user types the new value
+   in this message. Never suggest raising a limit or clearing the news lock.
 4. Demo account only. Not financial advice.
 5. Answer in Arabic, short and simple. Field names, symbols, numbers and commands go in
    code blocks on their own lines, never inside an Arabic sentence.
