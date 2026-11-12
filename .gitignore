@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+
+# Screenshots can show account details: keep them out of git.
+inbox/*
+!inbox/.gitkeep
