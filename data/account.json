@@ -1,13 +1,19 @@
 {
-  "balance": 102,
-  "free_margin": 26.73,
+  "balance": 102.00,
+  "free_margin": 26.60,
   "leverage": 15,
   "currency": "USD",
   "risk_pct": 1,
   "max_open_risk_pct": 6,
   "max_position_pct": 25,
   "account_type": "demo",
-  "open_positions": null,
-  "source": "starting values, not read from a screenshot",
-  "updated_at": "2026-11-12T21:52:10Z"
+  "open_positions": [
+    {"symbol": "AAL", "side": "buy", "lots": 1, "open_price": 13.42, "stop": null, "target": null, "stop_seen": false},
+    {"symbol": "F", "side": "buy", "lots": 2, "open_price": 11.93, "stop": null, "target": null, "stop_seen": false},
+    {"symbol": "HBAN", "side": "buy", "lots": 1, "open_price": 15.75, "stop": null, "target": null, "stop_seen": false},
+    {"symbol": "T", "side": "buy", "lots": 1, "open_price": 22.20, "stop": null, "target": null, "stop_seen": false}
+  ],
+  "open_positions_note": "stop_seen false: the Trade tab list was collapsed, so stop and target were not visible. They are unknown, not confirmed absent.",
+  "source": "Trade tab screenshot",
+  "updated_at": "2026-11-12T22:04:00Z"
 }

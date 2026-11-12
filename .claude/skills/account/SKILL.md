@@ -56,6 +56,11 @@ say what is needed.
 - Each `open_positions` item: `symbol`, `side`, `lots`, `open_price`, `stop` (or `null`
   when the position has no stop), `target` (or `null`). If the tab shows no positions,
   write an empty list `[]`. Only write `[]` when the whole positions area is visible.
+- The collapsed positions list (symbol, side, volume, open price -> current price, profit)
+  does **not** show S/L or T/P. In that case the stop is unknown, not absent: write
+  `"stop": null, "target": null, "stop_seen": false`, report the stops as missing, and ask
+  for a screenshot of each position expanded (tap it) or for the stops typed. Write
+  `"stop_seen": true` only when the S/L field of that position was visible.
 - Equity, margin and margin level may be shown to the user but are not stored.
 - The Trade tab does not show leverage. `leverage` changes only when the user types it.
 - Set `updated_at` to the current UTC time and `source` to `"Trade tab screenshot"`,

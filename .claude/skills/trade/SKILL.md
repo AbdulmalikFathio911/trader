@@ -172,6 +172,8 @@ A stock **sell** goes through 5a.
   side of its open price has zero risk.
 - **List every open position that has no stop**, as a warning. Its risk is not bounded and
   is not in the sum; say that the sum is therefore a lower bound.
+- A position stored with `"stop_seen": false` has an **unknown** stop (the Trade tab list
+  was collapsed). Treat it the same way, but say "stop unknown", not "no stop".
 - The check: `open risk + new risk <= balance * max_open_risk_pct / 100`. Compute it with
   `python3 -c` using `decimal.Decimal`, and show the numbers. If it fails -> no trade.
 
