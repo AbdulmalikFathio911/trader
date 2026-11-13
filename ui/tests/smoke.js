@@ -11,6 +11,7 @@ const writes = [];
 const errors = [];
 let sampleReply = null;
 let sampleQueue = [];
+let extraCalls = 0, extraImages = 0, lastImages = 0, extraReply = null, appliedTier = '';
 let reviewReply = null;
 let sampleCalls = 0;
 let reviewCalls = 0;
@@ -29,17 +30,27 @@ function fakeDb() {
   };
 }
 function fakeSample() {
-  const fn = async () => ({ text: '{}', truncated: false });
-  fn.json = async (input, opts) => {
+  const fn = async (input, opts) => {
     if (!Array.isArray(opts.images) || !opts.images.length) throw { code: 'invalid_request', message: 'no images' };
-    if (input.startsWith('You review one CLOSED')) { reviewCalls++; return JSON.parse(JSON.stringify(reviewReply)); }
+    if (input.startsWith('You read extra screenshots')) {
+      extraCalls++;
+      extraImages = opts.images.length;
+      if (extraReply && extraReply.__error) throw extraReply.__error;
+      return { text: 'Here it is:\n```json\n' + JSON.stringify(extraReply) + '\n```', truncated: false, modelTierApplied: opts.modelTier };
+    }
     sampleCalls++;
     lastPrompt = input;
+    lastImages = opts.images.length;
     tiers.push(opts.modelTier);
     if (opts.onText) opts.onText({ text: 'x', delta: 'x' });
     const reply = sampleQueue.length ? sampleQueue.shift() : sampleReply;
     if (reply && reply.__error) throw reply.__error;
-    return JSON.parse(JSON.stringify(reply));
+    return { text: JSON.stringify(reply), truncated: false, modelTierApplied: appliedTier || opts.modelTier };
+  };
+  fn.json = async (input, opts) => {
+    if (!Array.isArray(opts.images) || !opts.images.length) throw { code: 'invalid_request', message: 'no images' };
+    if (input.startsWith('You review one CLOSED')) { reviewCalls++; return JSON.parse(JSON.stringify(reviewReply)); }
+    throw { code: 'invalid_request', message: 'unexpected json call' };
   };
   fn.limits = async () => ({ maxPromptBytes: 262144, images: { maxCount: 4, maxInputBytes: 2e7, mediaTypes: ['image/png', 'image/jpeg'] } });
   return fn;
@@ -268,6 +279,33 @@ function eurusd(overrides) {
   sampleReply.setup.decision = 'no_trade'; sampleReply.setup.failed_gate = 2;
   await analyse();
   check('news never turns a no trade into a ticket', stamp() === 'لا صفقة' && text().includes('GATE 2') && text().includes('خبر مهم قريب'), text());
+
+  // 11c. extra screenshots have their own box and their own reading: more than four images in one run
+  const clearThumbs = () => { Array.from(doc.querySelectorAll('#thumbs .thumb button, #thumbs-extra .thumb button')).reverse().forEach((b) => b.click()); };
+  clearThumbs();
+  pickFiles(4); pickFiles(3, 'files-extra'); await wait(20);
+  check('seven images are accepted across the two boxes', doc.querySelectorAll('#thumbs .thumb').length === 4 && doc.querySelectorAll('#thumbs-extra .thumb').length === 3);
+  extraReply = { images: [{ n: 1, kind: 'trade_tab' }, { n: 2, kind: 'calendar' }, { n: 3, kind: 'chart' }],
+    account: { balance: '3000.48', equity: '3000.48', margin: '0.00', free_margin: '3000.48', positions: [] }, specification: null,
+    news: { checked: true, source_image: 2, events: [{ when: at(40), kind: 'release', currency: 'EUR', symbol: null, impact: 'high', title_ar: 'خبر أوروبي' }], context_ar: '', against_trade: false } };
+  sampleReply = eurusd((d) => { d.account = null; d.images = [d.images[0]]; });
+  appliedTier = 'default';
+  let extraBefore = extraCalls; callsBefore = sampleCalls;
+  $('btn-run').click(); await wait(200);
+  check('extras are read in their own call', extraCalls === extraBefore + 1 && extraImages === 3 && lastImages === 4 && sampleCalls === callsBefore + 1, [extraCalls, extraImages, lastImages, sampleCalls - callsBefore].join(','));
+  check('account from the extra box is applied', $('acc-balance') ? $('acc-balance').value === '3000.48' : text().includes('3000.48'), text());
+  check('calendar from the extra box blocks', stamp() === 'لا صفقة' && text().includes('NEWS_EVENT') && text().includes('خبر أوروبي'), text());
+  check('a chart in the extra box is flagged', text().includes('وُضعت مع الصور الإضافية'));
+  check('the tier that answered is shown and a lower tier is flagged', text().includes('Model tier that answered') && text().includes('أتاح نموذجاً أقل'), text());
+  appliedTier = '';
+  clearThumbs();
+  pickFiles(1, 'files-extra'); await wait(20);
+  extraReply = { images: [{ n: 1, kind: 'trade_tab' }], account: { balance: '102.00', equity: '102.00', margin: '0.00', free_margin: '102.00', positions: [] }, specification: null, news: { checked: false, events: [] } };
+  callsBefore = sampleCalls;
+  $('btn-run').click(); await wait(150);
+  check('extras alone update the setup without an analysis call', stamp() === 'تم التحديث' && sampleCalls === callsBefore, stamp());
+  clearThumbs();
+  extraReply = null;
 
   // 12. photos: an analysis error offers a retry
   sampleReply = { __error: { code: 'upstream_error', message: 'x' } };

@@ -98,6 +98,8 @@ h2 { font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; mar
 .drop:focus-within { outline: 2px solid var(--gold); outline-offset: 2px; }
 .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
 .thumbs:empty { display: none; }
+.drop.extra { padding: 14px 16px; min-height: 0; gap: 4px; }
+.drop.extra strong { font-size: 15px; }
 .thumb { margin: 0; position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--hair); background: var(--desk-2); }
 .thumb img { display: block; width: 100%; height: 84px; object-fit: cover; }
 .thumb button { position: absolute; top: 4px; inset-inline-end: 4px; width: 28px; height: 28px; border-radius: 50%; border: 0; background: rgba(12, 28, 34, 0.85); color: var(--chalk); line-height: 1; }
@@ -268,10 +270,16 @@ textarea { width: 100%; min-height: 96px; padding: 10px 12px; border-radius: 12p
             <label class="drop" id="drop" for="files">
               <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 40h36"/><path d="M12 32V20"/><path d="M12 14v-4"/><rect x="9" y="14" width="6" height="12" rx="1"/><path d="M24 36V26"/><path d="M24 12V8"/><rect x="21" y="12" width="6" height="14" rx="1"/><path d="M36 30v-8"/><path d="M36 10V6"/><rect x="33" y="10" width="6" height="12" rx="1"/></svg>
               <strong>اختر صور الشارت</strong>
-              <span>نفس الرمز على أكثر من فريم، ومعها صورة تبويب التداول وصورة التقويم الاقتصادي إن وجدتا</span>
+              <span>نفس الرمز على أكثر من فريم. صورتان أو ثلاث تكفي</span>
               <input type="file" id="files" accept="image/png,image/jpeg,image/webp" multiple>
             </label>
             <div class="thumbs" id="thumbs"></div>
+            <label class="drop extra" id="drop-extra" for="files-extra">
+              <strong>صور إضافية (اختياري)</strong>
+              <span>تبويب التداول، مواصفات الرمز، التقويم الاقتصادي. لا تُحسب من عدد صور الشارت</span>
+              <input type="file" id="files-extra" accept="image/png,image/jpeg,image/webp" multiple>
+            </label>
+            <div class="thumbs" id="thumbs-extra"></div>
             <button type="button" class="cta" id="btn-run" disabled>حلّل وأخرج التذكرة</button>
             <div class="working" id="working" hidden>
               <span class="step" id="ai-step"></span>

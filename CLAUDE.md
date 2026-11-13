@@ -89,7 +89,11 @@ It never places an order, never asks for a password and loads nothing from the n
   Claude app (the artifact `sample` capability). There is no API key, no SDK and no
   other service. The model does steps 1 to 4 of `/trade` (read, analyse, gates 1 to 5);
   the page's own code does step 5 (sizing, share count, open risk, gate 6) and step 6
-  (journal and answer).
+  (journal and answer). The first reading asks for the strongest model tier and the
+  second for the default one; the result shows the tier that really answered.
+- **Two upload boxes.** Chart screenshots go to the analysis. The Trade tab, the
+  Specification and the calendar go to a second box and are read in their own call, so
+  they do not use up the per-call image limit of the charts.
 - **Same guards.** The page applies in code what the trade skill states in words: the
   candidate entries in order, the check of the setup against the analysis, the news lock,
   the news event from a calendar screenshot, the daily loss limit, the second reading, the order-line warning and the fresh-price
