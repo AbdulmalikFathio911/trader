@@ -149,6 +149,27 @@ symbol is no trade.** Do not adjust levels or estimates after seeing a gate fail
 
 Gates 1-5 are judged from the analysis; gate 6 is checked with the script in step 5.
 
+### Trading style
+
+Two styles. The user chooses; the default is swing. The risk rules, the reward:risk
+gate and every guard are the same in both. Never switch style to make a ticket pass.
+
+- **Swing (default).** As written above: direction, stop and targets come from the
+  highest timeframe.
+- **Intraday.** Needs at least two timeframes of the same symbol. Direction and the
+  estimate (gates 1 and 2) still come from the highest timeframe. The setup comes from
+  the **lowest** timeframe given, the setup timeframe:
+  - its base scenario must point the same way as the trade; sideways or the other way
+    fails gate 1;
+  - entries and targets (gates 3 and 5) are levels named in the analysis;
+  - the stop (gate 4) is beyond the invalidation level of the **setup timeframe's** base
+    scenario, not the highest timeframe's;
+  - the setup timeframe must be M15 or higher. Faster charts are refused: producing and
+    checking a ticket takes minutes, so it is stale before it can be used.
+
+  The answer must warn that an intraday stop is closer, is hit more often, and rests on
+  weaker evidence than the weekly method. Scalping on M1 or M5 is not supported.
+
 ### Candidate entries
 
 Gate 3 can be met by more than one level. List up to **three** candidate entries, nearest

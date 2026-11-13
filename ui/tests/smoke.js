@@ -307,6 +307,35 @@ function eurusd(overrides) {
   clearThumbs();
   extraReply = null;
 
+  // 11d. trading style: intraday takes the stop from the lowest timeframe
+  const twoFrames = (tf) => eurusd((d) => {
+    d.images.push({ n: 3, kind: 'chart', symbol: 'EURUSD', timeframe: tf, bid: '1.1057', ask: null, visible_high: '1.1108', visible_low: '1.0990', order_lines: [], shown_time: null });
+    d.charts.push({ symbol: 'EURUSD', timeframe: tf, weaker_evidence: true, trend: 'down', strength: 'moderate', trend_ar: 'هابط',
+      supports: [{ price: '1.1078', why_ar: 'قاع' }], resistances: [{ price: '1.1098', why_ar: 'قمة' }], moving_averages_ar: '', volume_ar: '', patterns_ar: [], assessment_ar: '',
+      scenarios: [{ name_ar: 'هبوط', direction: 'down', estimate_pct: 60, targets: ['1.1078'], invalidation: '1.1103' }, { name_ar: 'صعود', direction: 'up', estimate_pct: 40, targets: ['1.1150'], invalidation: '1.0990' }] });
+    d.setup.stop = '1.1104';
+  });
+  sampleReply = twoFrames('M15');
+  await analyse();
+  check('swing keeps the highest timeframe stop rule', stamp() === 'لا صفقة' && text().includes('GATE 4') && text().includes('Invalidation (H4)'), text());
+  $('style-intraday').click();
+  await wait(1500);
+  check('style is saved with the account', writes.some((w) => w[0] === 'set' && w[1] === 'state/account' && w[2].style === 'intraday'));
+  check('style toggle asks for a new analysis', $('style-intraday').getAttribute('aria-pressed') === 'true' && $('ai-note').textContent.includes('أسلوب الصفقة'));
+  await analyse();
+  check('intraday takes the stop from the setup timeframe', stamp() === 'تذكرة جاهزة' && ticket().includes('Stop Loss:   1.1104') && text().includes('Trading style') && text().includes('أسلوب الصفقة اليومية'), text());
+  check('the prompt names the style', lastPrompt.includes('TRADING STYLE chosen by the user: intraday'));
+  sampleReply = twoFrames('M5');
+  await analyse();
+  check('charts faster than M15 are refused', stamp() === 'لا صفقة' && text().includes('GATE S') && text().includes('ربع ساعة'), text());
+  sampleReply = twoFrames('M15'); sampleReply.charts[1].scenarios[0].direction = 'sideways';
+  await analyse();
+  check('intraday needs the setup timeframe to agree', text().includes('GATE 1') && text().includes('Setup timeframe'), text());
+  sampleReply = eurusd();
+  await analyse();
+  check('intraday needs two timeframes', text().includes('GATE 1') && text().includes('two timeframes'), text());
+  $('style-swing').click();
+
   // 12. photos: an analysis error offers a retry
   sampleReply = { __error: { code: 'upstream_error', message: 'x' } };
   await analyse();

@@ -197,6 +197,7 @@
     GATE_3: 'بوابة الدخول: لا يوجد مستوى دخول صالح أو السعر الحالي غير مقروء.',
     GATE_4: 'بوابة الوقف: لا يوجد سعر مطبوع بعد مستوى الإبطال.',
     GATE_5: 'بوابة الهدف: لا يوجد مستوى تالٍ في اتجاه الصفقة.',
+    GATE_S: 'فريم الدخول أصغر من ربع ساعة. إخراج التذكرة يأخذ دقائق، فتصير قديمة قبل استعمالها.',
     NEWS_LOCK: 'قفل الأخبار مفعّل. لا تذاكر حتى ينتهي أو تلغيه.',
     NEWS_EVENT: 'خبر مهم قريب من وقت الصفقة حسب صورة التقويم. لا تذكرة الآن.',
     DAILY_LIMIT: 'وصلت حد الخسائر اليومي. لا تذاكر جديدة اليوم.',
@@ -222,6 +223,7 @@
     NEWS_LATER: 'يوجد خبر مهم لاحقاً حسب صورة التقويم. يمكنك تفعيل قفل الأخبار قبل موعده.',
     NEWS_NEAR: 'يوجد أيضاً خبر مهم قريب حسب صورة التقويم.',
     NEWS_AGAINST: 'قراءة التقويم ترى أن الأخبار تعاكس اتجاه الصفقة. هذا رأي وليس قياساً.',
+    INTRADAY: 'أسلوب الصفقة اليومية: الوقف من الفريم الأصغر، فهو أقرب ويُضرب أكثر، والدليل أضعف من الطريقة الأسبوعية.',
     LOWER_TIER: 'التحليل لم يجرِ بأقوى نموذج طُلب، لأن حسابك في التطبيق أتاح نموذجاً أقل.',
     MISPLACED_CHART: 'صورة شارت وُضعت مع الصور الإضافية فلم تُحلَّل. ضعها مع صور الشارت.'
   };
@@ -462,6 +464,21 @@
     return el('details', open ? { open: '' } : {}, [el('summary', { text: title })].concat(kids));
   }
 
+  function renderStyle() {
+    var intraday = styleNow() === 'intraday';
+    $('style-swing').setAttribute('aria-pressed', String(!intraday));
+    $('style-intraday').setAttribute('aria-pressed', String(intraday));
+    $('style-note').textContent = intraday
+      ? 'الاتجاه من الفريم الأعلى، والدخول والوقف من الفريم الأصغر (ربع ساعة أو أكبر). ارفع فريمين على الأقل.'
+      : 'الاتجاه والوقف والهدف من الفريم الأعلى. الوقف أبعد والصفقات أقل.';
+  }
+  function setStyle(style) {
+    if (styleNow() === style) return;
+    state.account.style = style;
+    saveSoon('account');
+    renderStyle();
+    if (state.lastSource === 'ai' && state.lastData) aiNote('غيّرت أسلوب الصفقة. اضغط حلّل من جديد ليُعاد التحليل بهذا الأسلوب.', false);
+  }
   function renderNews() {
     var left = newsLockLeft(), on = left > 0;
     $('news-lock').setAttribute('aria-pressed', String(on));
@@ -1088,6 +1105,9 @@
       parts.push('===== FILE: ' + f.path + ' =====', f.text, '===== END FILE: ' + f.path + ' =====', '');
     });
     parts.push(PAGE_TASK);
+    parts.push('', styleNow() === 'intraday'
+      ? 'TRADING STYLE chosen by the user: intraday. Follow "Trading style" in the trade skill: gates 1 and 2 from the highest timeframe; the setup timeframe is the lowest timeframe given (M15 or higher), its base scenario must point the same way as the trade, and the stop goes beyond the invalidation level of the setup timeframe\'s base scenario. Put the entries, the stop and the targets on the setup timeframe\'s levels.'
+      : 'TRADING STYLE chosen by the user: swing (the default): direction, stop and targets from the highest timeframe.');
     parts.push('', 'The viewer\'s clock now, local time: ' + localStamp(new Date()) + '. Use it only to resolve a calendar that prints "today" or a weekday instead of a date.');
     return parts.join('\n');
   }
@@ -1279,6 +1299,7 @@
     return [{ label: 'أسبوعي', ok: !!seen.W1 }, { label: 'أربع ساعات', ok: !!seen.H4 }, { label: 'ساعة', ok: !!seen.H1 },
             { label: 'تبويب التداول', ok: tab }, { label: 'التقويم', ok: cal }];
   }
+  function styleNow() { return state.account.style === 'intraday' ? 'intraday' : 'swing'; }
   function tfRank(tf) { var i = TF_ORDER.indexOf(str(tf).toUpperCase()); return i < 0 ? 999 : i; }
   function inLevels(value, levels) { return levels.some(function (l) { return l.eq(value); }); }
 
@@ -1305,14 +1326,23 @@
     if (!(est >= 50)) return fail(2, [['Base estimate', String(base.estimate_pct) + '%']]);
     if (!(Math.abs(sum - 100) <= 1)) return fail(2, [['Estimates sum', String(sum)]]);
     if (biggest > est) return fail(2, [['Check', 'the first scenario is not the largest']]);
-    var inv = dec(base.invalidation), stop = dec(setup.stop);
-    if (!inv || !stop) return fail(4, [['Stop', price(setup.stop) || 'missing'], ['Invalidation', price(base.invalidation) || 'missing']]);
-    if (side === 'sell' ? !stop.gt(inv) : !stop.lt(inv)) return fail(4, [['Stop', price(setup.stop)], ['Invalidation', price(base.invalidation)]]);
+    var ref = base, refTf = str(top.timeframe);   // the scenario whose invalidation the stop must clear
+    if (styleNow() === 'intraday') {               // "Trading style" in the trade skill
+      if (charts.length < 2) return fail(1, [['Check', 'the intraday style needs two timeframes']]);
+      var setupChart = charts[charts.length - 1], setupDir = str(setupChart.scenarios[0].direction).toLowerCase();
+      if (tfRank(setupChart.timeframe) > TF_ORDER.indexOf('M15')) return fail('S', [['Setup timeframe', str(setupChart.timeframe) || 'missing'], ['Minimum', 'M15']]);
+      if (setupDir !== (want === 'buy' ? 'up' : 'down')) return fail(1, [['Setup timeframe', str(setupChart.timeframe)], ['Its base direction', setupDir || 'missing'], ['Side', side]]);
+      ref = setupChart.scenarios[0];
+      refTf = str(setupChart.timeframe);
+    }
+    var inv = dec(ref.invalidation), stop = dec(setup.stop);
+    if (!inv || !stop) return fail(4, [['Stop', price(setup.stop) || 'missing'], ['Invalidation (' + refTf + ')', price(ref.invalidation) || 'missing']]);
+    if (side === 'sell' ? !stop.gt(inv) : !stop.lt(inv)) return fail(4, [['Stop', price(setup.stop)], ['Invalidation (' + refTf + ')', price(ref.invalidation)]]);
     var levels = [], targets = [];
     charts.forEach(function (c) {
       (c.supports || []).concat(c.resistances || []).forEach(function (l) { var d = dec(l && l.price); if (d) levels.push(d); });
     });
-    (base.targets || []).forEach(function (t) { var d = dec(t); if (d) targets.push(d); });
+    (base.targets || []).concat(ref === base ? [] : (ref.targets || [])).forEach(function (t) { var d = dec(t); if (d) targets.push(d); });
     return { ok: true, side: side, levels: levels, targets: targets };
   }
 
@@ -1367,6 +1397,7 @@
     var evidence = evidenceOf(data);
     if (state.lastNotes) evidence.appendChild(state.lastNotes.cloneNode(true));
     if (state.lastTier) evidence.appendChild(block([['Model tier asked', 'complex'], ['Model tier that answered', state.lastTier]]));
+    evidence.appendChild(block([['Trading style', styleNow()]]));
     var setup = data.setup || {}, sym = str(setup.symbol);
     var images = (data.images || []).filter(function (im) { return im.kind === 'chart' && str(im.symbol) && str(im.timeframe); });
     var baseTrade = { symbol: sym, side: str(setup.side).toLowerCase(), stop: price(setup.stop), estimate: str(setup.base_estimate_pct) };
@@ -1391,6 +1422,7 @@
       res.coverage = coverageOf(data);
       if (state.lastTier && state.lastTier !== 'complex') res.warnings.push({ ar: WARN.LOWER_TIER });
       if (state.misplaced) res.warnings.push({ ar: WARN.MISPLACED_CHART });
+      if (styleNow() === 'intraday') res.warnings.push({ ar: WARN.INTRADAY });
       var news = newsOf(data, sym);   // step 3b: news can only block a ticket or add a warning
       evidence.appendChild(newsEvidence(news));
       if (!news.checked) res.warnings.push({ ar: WARN.NEWS_NOT_CHECKED });
@@ -1584,6 +1616,9 @@
     });
 
     $('files').addEventListener('change', function () { addFiles($('files').files); $('files').value = ''; });
+    $('style-swing').addEventListener('click', function () { setStyle('swing'); });
+    $('style-intraday').addEventListener('click', function () { setStyle('intraday'); });
+    renderStyle();
     $('files-extra').addEventListener('change', function () { addFiles($('files-extra').files, true); $('files-extra').value = ''; });
     var drop = $('drop');
     drop.addEventListener('dragover', function (ev) { ev.preventDefault(); drop.classList.add('over'); });

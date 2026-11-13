@@ -267,6 +267,11 @@ textarea { width: 100%; min-height: 96px; padding: 10px 12px; border-radius: 12p
           </div>
 
           <div id="panel-ai" class="composer">
+            <div class="seg" role="group" aria-label="أسلوب الصفقة">
+              <button type="button" id="style-swing" aria-pressed="true">متأرجحة</button>
+              <button type="button" id="style-intraday" aria-pressed="false">يومية</button>
+            </div>
+            <p class="note" id="style-note"></p>
             <label class="drop" id="drop" for="files">
               <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 40h36"/><path d="M12 32V20"/><path d="M12 14v-4"/><rect x="9" y="14" width="6" height="12" rx="1"/><path d="M24 36V26"/><path d="M24 12V8"/><rect x="21" y="12" width="6" height="14" rx="1"/><path d="M36 30v-8"/><path d="M36 10V6"/><rect x="33" y="10" width="6" height="12" rx="1"/></svg>
               <strong>اختر صور الشارت</strong>

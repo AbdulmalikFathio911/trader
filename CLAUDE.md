@@ -95,7 +95,7 @@ It never places an order, never asks for a password and loads nothing from the n
   Specification and the calendar go to a second box and are read in their own call, so
   they do not use up the per-call image limit of the charts.
 - **Same guards.** The page applies in code what the trade skill states in words: the
-  candidate entries in order, the check of the setup against the analysis, the news lock,
+  trading style, the candidate entries in order, the check of the setup against the analysis, the news lock,
   the news event from a calendar screenshot, the daily loss limit, the second reading, the order-line warning and the fresh-price
   check. Change the rule in `.claude/skills/trade/SKILL.md` and in `ui/app.js` together.
 - **Same arithmetic.** `ui/calc.js` is a port of `calc.py`. `tests/test_ui.py` compares
